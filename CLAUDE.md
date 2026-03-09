@@ -1,6 +1,8 @@
 # VoiceClaw - 開発ドキュメント
 
 ## 🔧 最新の修正履歴
+- 2026-03-09: LiveKit Aura風WebGLシェーダービジュアライザー実装
+- 2026-03-09: ClawX互換Gateway認証（Ed25519デバイスID + チャレンジ-レスポンス）
 - 2026-03-09: 初期プロジェクト構築（Electron + React + TypeScript + Tailwind CSS）
 
 ## 🏗️ ディレクトリの目的と責務
@@ -11,10 +13,14 @@
 - `electron/main/overlay-window.ts` - フローティングオーバーレイウィンドウ管理
 - `electron/main/shortcut.ts` - グローバルショートカット（Alt+Space）
 - `electron/main/tray.ts` - システムトレイ
-- `electron/gateway/connection.ts` - OpenClaw Gateway WebSocket接続
+- `electron/gateway/connection.ts` - OpenClaw Gateway WebSocket接続（ClawX互換プロトコル）
+- `electron/utils/device-identity.ts` - Ed25519デバイスID生成・署名
 - `electron/preload/index.ts` - contextBridge API
 - `src/App.tsx` - React ルートコンポーネント
-- `src/components/overlay/` - オーバーレイUI（VoiceInput, Transcription, ResponsePanel, WaveformVisualizer）
+- `src/components/overlay/AuraVisualizer.tsx` - WebGLシェーダーオーラビジュアライザー
+- `src/components/overlay/ReactShaderToy.tsx` - WebGLレンダリングエンジン
+- `src/components/overlay/VoiceInput.tsx` - 音声入力UI（Auraオーブ + マイク）
+- `src/hooks/useAuraVisualizer.ts` - 状態・音量→シェーダーユニフォーム変換
 - `src/stores/` - Zustand状態管理（voice, gateway, conversation, settings, ui）
 
 ## ⚙️ 技術的な実装詳細
@@ -25,16 +31,31 @@
 | 状態管理 | Zustand |
 | スタイリング | Tailwind CSS (ダークテーマ) |
 | アニメーション | Framer Motion |
+| ビジュアライザー | WebGL GLSL シェーダー（LiveKit Aura風） |
 | 音声認識 | Web Speech API |
 | WebSocket | ws パッケージ |
+| Gateway認証 | Ed25519署名 + チャレンジ-レスポンス |
 | ビルド | Vite + electron-builder |
+
+## 🔐 Gateway接続プロトコル（ClawX互換）
+1. WebSocket接続: `ws://localhost:18789/ws`
+2. サーバーから`connect.challenge`イベント受信（nonce付き）
+3. nonceを使ってEd25519署名を生成
+4. `connect`リクエスト送信（device ID + 署名 + gateway token）
+5. Gateway tokenは`~/.openclaw/openclaw.json`から自動読み取り
+6. リクエスト形式: `{ type: "req", id, method, params }`
+7. チャット送信: `chat.send({ sessionKey, message, deliver, idempotencyKey })`
+8. ストリーミング: `event` type で `agent` イベント（phase: streaming/final/completed）
 
 ## 🎨 実装パターンとベストプラクティス
 - ESM形式（package.jsonに`"type": "module"`）
 - `__dirname`の代わりに`fileURLToPath(import.meta.url)`を使用
 - wsパッケージはvite.config.tsでexternalに指定
 - electron-storeで設定永続化
+- デバイスIDは`userData/device-identity.json`に永続化
 
 ## 🛠️ トラブルシューティング
 - GPU関連エラー（transparent window）: macOSでは正常。機能に影響なし
 - `ws`モジュール: external指定必須。バンドルするとElectronで動作しない
+- Gateway token: `~/.openclaw/openclaw.json` > `gateway.auth.token`
+- デバイスID: Ed25519鍵ペア、`app.getPath('userData')/device-identity.json`に保存
