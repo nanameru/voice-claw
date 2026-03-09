@@ -1,46 +1,70 @@
 import { ipcMain } from 'electron'
 import { getSecureValue } from '../utils/store'
+import store from '../utils/store'
 import { logger } from '../utils/logger'
 
-const WHISPER_API_URL = 'https://api.openai.com/v1/audio/transcriptions'
+const STT_ENDPOINTS: Record<string, { url: string; model: string }> = {
+  openai: {
+    url: 'https://api.openai.com/v1/audio/transcriptions',
+    model: 'whisper-1',
+  },
+  groq: {
+    url: 'https://api.groq.com/openai/v1/audio/transcriptions',
+    model: 'whisper-large-v3',
+  },
+}
 
 /**
- * Transcribe audio buffer using OpenAI Whisper API.
- * Receives a raw audio buffer (webm/opus from MediaRecorder) and returns text.
+ * Transcribe audio buffer using Whisper API (OpenAI or Groq).
  */
 async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
   const apiKey = getSecureValue('whisperApiKey')
   if (!apiKey) {
-    throw new Error('Whisper API key not configured. Set it in Settings.')
+    throw new Error('API key not configured. Set it in Settings.')
   }
+
+  const provider = store.get('audio.sttProvider') || 'groq'
+  const endpoint = STT_ENDPOINTS[provider] || STT_ENDPOINTS.groq
+
+  logger.info(`STT provider: ${provider}, model: ${endpoint.model}`)
 
   // Build multipart/form-data manually to avoid external dependencies
   const boundary = `----VoiceClawBoundary${Date.now()}`
   const CRLF = '\r\n'
 
-  const preamble = [
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="file"; filename="recording.webm"`,
-    `Content-Type: audio/webm`,
-    '',
-    '',
-  ].join(CRLF)
+  const parts: Buffer[] = []
 
-  const modelPart = [
-    '',
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="model"`,
-    '',
-    'whisper-1',
-    `--${boundary}--`,
-    '',
-  ].join(CRLF)
+  // file part
+  parts.push(Buffer.from(
+    `--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="file"; filename="recording.webm"${CRLF}` +
+    `Content-Type: audio/webm${CRLF}${CRLF}`,
+    'utf-8'
+  ))
+  parts.push(audioBuffer)
 
-  const preambleBuffer = Buffer.from(preamble, 'utf-8')
-  const modelBuffer = Buffer.from(modelPart, 'utf-8')
-  const body = Buffer.concat([preambleBuffer, audioBuffer, modelBuffer])
+  // model part
+  parts.push(Buffer.from(
+    `${CRLF}--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="model"${CRLF}${CRLF}` +
+    endpoint.model,
+    'utf-8'
+  ))
 
-  const response = await fetch(WHISPER_API_URL, {
+  // language part (Japanese)
+  parts.push(Buffer.from(
+    `${CRLF}--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="language"${CRLF}${CRLF}` +
+    'ja',
+    'utf-8'
+  ))
+
+  // closing boundary
+  parts.push(Buffer.from(`${CRLF}--${boundary}--${CRLF}`, 'utf-8'))
+
+  const body = Buffer.concat(parts)
+
+  const response = await fetch(endpoint.url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -51,8 +75,8 @@ async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
 
   if (!response.ok) {
     const errorText = await response.text()
-    logger.error(`Whisper API error (${response.status}): ${errorText}`)
-    throw new Error(`Whisper API error: ${response.status} - ${errorText}`)
+    logger.error(`STT API error (${response.status}): ${errorText}`)
+    throw new Error(`STT API error: ${response.status} - ${errorText}`)
   }
 
   const result = await response.json() as { text: string }

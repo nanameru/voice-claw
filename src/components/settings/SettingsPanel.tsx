@@ -13,6 +13,7 @@ export function SettingsPanel() {
   const [port, setPort] = useState(String(settings.gatewayPort))
   const [shortcut, setShortcut] = useState(settings.shortcut)
   const [engine, setEngine] = useState(settings.audioEngine)
+  const [sttProvider, setSttProvider] = useState(settings.sttProvider || 'groq')
   const [whisperKey, setWhisperKey] = useState(settings.whisperApiKey)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDevice, setSelectedDevice] = useState(settings.audioDeviceId || '')
@@ -40,7 +41,13 @@ export function SettingsPanel() {
     if (selectedDevice) {
       await settings.updateAudioDevice(selectedDevice)
     }
-    if (engine === 'whisper') {
+    await window.voiceClaw.store.set('audio', {
+      deviceId: selectedDevice || null,
+      engine,
+      sttProvider,
+      whisperApiKey: whisperKey,
+    })
+    if (whisperKey) {
       await settings.updateWhisperApiKey(whisperKey)
     }
   }
@@ -135,25 +142,28 @@ export function SettingsPanel() {
             ))}
           </select>
 
-          <label className={labelClass}>Recognition Engine</label>
+          <label className={labelClass}>STT Provider</label>
           <select
             className={inputClass}
-            value={engine}
-            onChange={(e) => setEngine(e.target.value as 'webspeech' | 'whisper')}
+            value={sttProvider}
+            onChange={(e) => setSttProvider(e.target.value as 'openai' | 'groq')}
           >
-            <option value="webspeech">Web Speech API</option>
-            <option value="whisper">Whisper API</option>
+            <option value="groq">Groq (Free, Fast)</option>
+            <option value="openai">OpenAI Whisper ($0.006/min)</option>
           </select>
 
-          {engine === 'whisper' && (
-            <input
-              className={inputClass}
-              type="password"
-              value={whisperKey}
-              onChange={(e) => setWhisperKey(e.target.value)}
-              placeholder="OpenAI API Key for Whisper"
-            />
-          )}
+          <input
+            className={inputClass}
+            type="password"
+            value={whisperKey}
+            onChange={(e) => setWhisperKey(e.target.value)}
+            placeholder={sttProvider === 'groq' ? 'Groq API Key (free at console.groq.com)' : 'OpenAI API Key'}
+          />
+          <p className="text-[10px] text-claw-text-dim">
+            {sttProvider === 'groq'
+              ? 'Get free key: console.groq.com → API Keys'
+              : 'Get key: platform.openai.com → API Keys'}
+          </p>
 
           <button
             onClick={handleSaveAudio}

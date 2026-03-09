@@ -6,6 +6,7 @@ interface SettingsState {
   shortcut: string
   audioDeviceId: string | null
   audioEngine: 'webspeech' | 'whisper'
+  sttProvider: 'openai' | 'groq'
   whisperApiKey: string
   onboarded: boolean
 
@@ -23,7 +24,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   gatewayPort: 18789,
   shortcut: 'Alt+Space',
   audioDeviceId: null,
-  audioEngine: 'webspeech',
+  audioEngine: 'whisper',
+  sttProvider: 'groq',
   whisperApiKey: '',
   onboarded: false,
 
@@ -33,6 +35,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     const audio = (await window.voiceClaw.store.get('audio')) as {
       deviceId: string | null
       engine: 'webspeech' | 'whisper'
+      sttProvider: 'openai' | 'groq'
       whisperApiKey: string
     }
     const onboarded = (await window.voiceClaw.store.get('onboarded')) as boolean
@@ -43,6 +46,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       shortcut,
       audioDeviceId: audio.deviceId,
       audioEngine: audio.engine,
+      sttProvider: audio.sttProvider || 'groq',
       whisperApiKey: audio.whisperApiKey,
       onboarded,
     })

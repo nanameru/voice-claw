@@ -11,6 +11,7 @@ interface StoreSchema {
   audio: {
     deviceId: string | null
     engine: 'webspeech' | 'whisper'
+    sttProvider: 'openai' | 'groq'
     whisperApiKey: string  // stored encrypted via safeStorage
   }
   onboarded: boolean
@@ -31,7 +32,8 @@ const store = new Store<StoreSchema>({
     shortcut: 'Alt+Space',
     audio: {
       deviceId: null,
-      engine: 'webspeech',
+      engine: 'whisper',
+      sttProvider: 'groq',
       whisperApiKey: '',
     },
     onboarded: false,
