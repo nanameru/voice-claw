@@ -109,7 +109,8 @@ function sendConnect(challengeNonce?: string): void {
         platform: process.platform,
         mode: CLIENT_MODE,
       },
-      auth: { token: gatewayToken },
+      // Token is NOT sent in plaintext — auth relies on Ed25519 signed challenge-response
+      // The token is incorporated in the signed payload (buildDeviceAuthPayload) for verification
       caps: [],
       role: ROLE,
       scopes: SCOPES,
@@ -127,6 +128,18 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
   await ensureDeviceIdentity()
   if (!gatewayToken) gatewayToken = loadGatewayToken()
   const { host, port } = store.get('gateway')
+
+  // Security: Only allow localhost connections
+  const allowedHosts = ['localhost', '127.0.0.1', '::1']
+  if (!allowedHosts.includes(host)) {
+    logger.error(`Blocked connection to non-localhost host: ${host}`)
+    throw new Error('Gateway connections are only allowed to localhost')
+  }
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+    logger.error(`Invalid gateway port: ${port}`)
+    throw new Error('Invalid gateway port')
+  }
+
   const url = `ws://${host}:${port}/ws`
   logger.info(`Connecting to gateway: ${url}`)
 
@@ -145,7 +158,7 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
 
         if (message.type === 'event' && message.event === 'connect.challenge') {
           const challengeNonce = message.payload?.nonce
-          logger.info(`Received challenge, re-signing with nonce: ${challengeNonce?.slice(0, 8)}...`)
+          logger.info('Received challenge, re-signing with server nonce')
           sendConnect(challengeNonce)
           return
         }

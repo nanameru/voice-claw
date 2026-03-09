@@ -4,9 +4,60 @@ import { getGatewayProcessManager } from '../gateway/process'
 import { updateShortcut } from './shortcut'
 import { hideOverlay, getOverlayWindow } from './overlay-window'
 import store from '../utils/store'
+import { logger } from '../utils/logger'
+
+// ── Security: Store key allowlist ──────────────────────
+const STORE_ALLOWED_KEYS = new Set([
+  'shortcut',
+  'onboarded',
+  'audio',
+  'gateway',
+])
+
+// ── Security: Gateway method whitelist ─────────────────
+const GATEWAY_ALLOWED_METHODS = new Set([
+  'chat.send',
+  'chat.cancel',
+  'session.create',
+  'session.destroy',
+  'session.list',
+  'ping',
+])
+
+// ── Security: Shortcut accelerator validation ──────────
+const ACCELERATOR_PATTERN = /^(Command|Cmd|Control|Ctrl|CommandOrControl|CmdOrCtrl|Alt|Option|AltGr|Shift|Super|Meta)(\+(Command|Cmd|Control|Ctrl|CommandOrControl|CmdOrCtrl|Alt|Option|AltGr|Shift|Super|Meta))*\+([A-Za-z0-9]|F[1-9]|F1[0-9]|F2[0-4]|Space|Tab|Backspace|Delete|Insert|Return|Enter|Up|Down|Left|Right|Home|End|PageUp|PageDown|Escape|Esc|Plus)$/
+
+function isValidAccelerator(shortcut: string): boolean {
+  return ACCELERATOR_PATTERN.test(shortcut)
+}
+
+// ── Security: Conversation input validation ────────────
+function isValidConversation(conv: unknown): conv is {
+  id: string
+  timestamp: number
+  transcript: string
+  response: string
+} {
+  if (!conv || typeof conv !== 'object') return false
+  const c = conv as Record<string, unknown>
+  return (
+    typeof c.id === 'string' && c.id.length > 0 && c.id.length <= 128 &&
+    typeof c.timestamp === 'number' && c.timestamp > 0 && Number.isFinite(c.timestamp) &&
+    typeof c.transcript === 'string' && c.transcript.length <= 50000 &&
+    typeof c.response === 'string' && c.response.length <= 100000
+  )
+}
 
 export function setupIpcHandlers(): void {
+  // Gateway send with method whitelist
   ipcMain.handle('gateway:send', (_event, method: string, params: Record<string, unknown>) => {
+    if (typeof method !== 'string' || !GATEWAY_ALLOWED_METHODS.has(method)) {
+      logger.warn(`Blocked gateway method call: ${method}`)
+      throw new Error(`Gateway method not allowed: ${method}`)
+    }
+    if (params !== null && params !== undefined && typeof params !== 'object') {
+      throw new Error('Invalid params: must be an object')
+    }
     sendToGateway(method, params)
   })
 
@@ -23,7 +74,11 @@ export function setupIpcHandlers(): void {
     return getConnectionStatus()
   })
 
+  // Shortcut update with accelerator validation
   ipcMain.handle('shortcut:update', (_event, shortcut: string) => {
+    if (typeof shortcut !== 'string' || !isValidAccelerator(shortcut)) {
+      throw new Error(`Invalid shortcut accelerator: ${shortcut}`)
+    }
     return updateShortcut(shortcut)
   })
 
@@ -31,11 +86,36 @@ export function setupIpcHandlers(): void {
     hideOverlay()
   })
 
+  // Store access with allowlist
   ipcMain.handle('store:get', (_event, key: string) => {
+    if (typeof key !== 'string' || !STORE_ALLOWED_KEYS.has(key)) {
+      logger.warn(`Blocked store:get for unauthorized key: ${key}`)
+      throw new Error(`Store access denied for key: ${key}`)
+    }
     return store.get(key as any)
   })
 
   ipcMain.handle('store:set', (_event, key: string, value: unknown) => {
+    if (typeof key !== 'string' || !STORE_ALLOWED_KEYS.has(key)) {
+      logger.warn(`Blocked store:set for unauthorized key: ${key}`)
+      throw new Error(`Store access denied for key: ${key}`)
+    }
+    // Validate gateway host/port to prevent redirect attacks
+    if (key === 'gateway' && value && typeof value === 'object') {
+      const gw = value as Record<string, unknown>
+      if (typeof gw.host !== 'string' || typeof gw.port !== 'number') {
+        throw new Error('Invalid gateway config shape')
+      }
+      // Only allow localhost connections
+      const allowedHosts = ['localhost', '127.0.0.1', '::1']
+      if (!allowedHosts.includes(gw.host)) {
+        logger.warn(`Blocked gateway host change to: ${gw.host}`)
+        throw new Error('Gateway host must be localhost for security')
+      }
+      if (!Number.isInteger(gw.port) || gw.port < 1 || gw.port > 65535) {
+        throw new Error('Invalid gateway port')
+      }
+    }
     store.set(key as any, value)
   })
 
@@ -59,12 +139,11 @@ export function setupIpcHandlers(): void {
     return store.get('conversations')
   })
 
-  ipcMain.handle('conversations:add', (_event, conversation: {
-    id: string
-    timestamp: number
-    transcript: string
-    response: string
-  }) => {
+  // Conversation add with input validation
+  ipcMain.handle('conversations:add', (_event, conversation: unknown) => {
+    if (!isValidConversation(conversation)) {
+      throw new Error('Invalid conversation data')
+    }
     const conversations = store.get('conversations')
     conversations.unshift(conversation)
     // Keep last 100 conversations

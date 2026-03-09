@@ -12,9 +12,14 @@ import { logger } from '../utils/logger'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// Catch uncaught exceptions to prevent crash dialogs
+// Catch uncaught exceptions — disconnect gateway and exit gracefully
 process.on('uncaughtException', (err) => {
   logger.error('Uncaught exception:', err.message)
+  try {
+    disconnectGateway()
+  } catch { /* ignore cleanup errors */ }
+  // Exit after a brief delay to allow log flushing
+  setTimeout(() => process.exit(1), 500)
 })
 
 // Single instance lock

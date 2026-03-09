@@ -5,7 +5,7 @@
  * Starts, monitors, reconnects, and stops the OpenClaw Gateway process.
  * VoiceClaw can run standalone without ClawX.
  */
-import { spawn, execSync, type ChildProcess } from 'child_process'
+import { spawn, spawnSync, execFileSync, type ChildProcess } from 'child_process'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import path from 'path'
 import os from 'os'
@@ -188,10 +188,10 @@ function findOpenClawBinary(): string | null {
     if (existsSync(p)) return p
   }
 
-  // Try PATH via which/where
+  // Try PATH via which/where (using execFileSync to avoid shell injection)
   try {
-    const cmd = process.platform === 'win32' ? 'where openclaw' : 'which openclaw'
-    const result = execSync(cmd, { encoding: 'utf8', timeout: 3000 }).trim()
+    const cmd = process.platform === 'win32' ? 'where' : 'which'
+    const result = execFileSync(cmd, ['openclaw'], { encoding: 'utf8', timeout: 3000 }).trim()
     if (result && existsSync(result.split('\n')[0])) return result.split('\n')[0]
   } catch { /* not found */ }
 
@@ -253,21 +253,30 @@ async function waitForPortFree(port: number, timeoutMs = 30000): Promise<void> {
 // Orphan process detection & cleanup
 // ────────────────────────────────────────────────────────
 
+function validatePort(port: number): void {
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port number: ${port}`)
+  }
+}
+
 async function findExistingGatewayPid(port: number): Promise<number | null> {
+  validatePort(port)
   try {
     if (process.platform === 'win32') {
-      const output = execSync(`netstat -ano | findstr :${port}`, {
+      // Use execFileSync to avoid shell injection
+      const output = execFileSync('netstat', ['-ano'], {
         encoding: 'utf8',
         timeout: 5000,
       }).trim()
-      const lines = output.split('\n').filter((l) => l.includes('LISTENING'))
+      const lines = output.split('\n').filter((l) => l.includes(`:${port}`) && l.includes('LISTENING'))
       if (lines.length > 0) {
         const parts = lines[0].trim().split(/\s+/)
         const pid = parseInt(parts[parts.length - 1], 10)
         if (!isNaN(pid) && pid > 0) return pid
       }
     } else {
-      const output = execSync(`lsof -i :${port} -sTCP:LISTEN -t`, {
+      // Use execFileSync with argument array to avoid shell injection
+      const output = execFileSync('lsof', ['-i', `:${port}`, '-sTCP:LISTEN', '-t'], {
         encoding: 'utf8',
         timeout: 5000,
       }).trim()
@@ -287,10 +296,13 @@ async function killOrphanedProcess(port: number): Promise<boolean> {
   // On macOS, unload launchctl service to prevent auto-restart
   if (process.platform === 'darwin') {
     try {
-      execSync('launchctl bootout gui/$(id -u) com.openclaw.gateway 2>/dev/null || true', {
-        encoding: 'utf8',
-        timeout: 5000,
-      })
+      const uid = String(process.getuid?.() ?? '')
+      if (uid) {
+        spawnSync('launchctl', ['bootout', `gui/${uid}`, 'com.openclaw.gateway'], {
+          encoding: 'utf8',
+          timeout: 5000,
+        })
+      }
     } catch { /* ignore */ }
   }
 
@@ -574,10 +586,11 @@ export class GatewayProcessManager extends EventEmitter {
       logger.warn('Failed to sync gateway token:', err)
     }
 
+    // Security: Token is passed ONLY via environment variable, NOT via CLI args
+    // CLI args are visible to all users via `ps aux`
     const gatewayArgs = [
       'gateway',
       '--port', String(this.status.port),
-      '--token', this.gatewayToken,
       '--allow-unconfigured',
     ]
 
@@ -593,6 +606,7 @@ export class GatewayProcessManager extends EventEmitter {
     logger.info(
       `Starting Gateway process (binary="${binary}", port=${this.status.port}, args="${gatewayArgs.join(' ')}")`
     )
+    // Note: token is passed via OPENCLAW_GATEWAY_TOKEN env var only (not logged)
 
     return new Promise<void>((resolve, reject) => {
       this.processExitCode = null

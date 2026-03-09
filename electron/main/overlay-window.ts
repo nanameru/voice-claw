@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron'
+import { BrowserWindow, screen, shell } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -31,7 +31,7 @@ export function createOverlayWindow(): BrowserWindow {
       preload: path.join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
 
@@ -41,6 +41,17 @@ export function createOverlayWindow(): BrowserWindow {
       hideOverlay()
     })
   }
+
+  // Prevent navigation to external URLs
+  overlayWindow.webContents.on('will-navigate', (e) => {
+    e.preventDefault()
+  })
+
+  // Redirect external link clicks to system browser
+  overlayWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
 
   overlayWindow.on('closed', () => {
     overlayWindow = null
