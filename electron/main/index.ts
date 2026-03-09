@@ -55,7 +55,7 @@ app.whenReady().then(async () => {
   mainWindow.webContents.on('did-finish-load', () => {
     logger.info('Page loaded, showing overlay')
     showOverlay()
-    if (process.env.VITE_DEV_SERVER_URL) {
+    if (!app.isPackaged) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' })
     }
   })

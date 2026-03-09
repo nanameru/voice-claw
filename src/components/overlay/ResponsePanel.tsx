@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useGatewayStore } from '../../stores/gateway'
 import ReactMarkdown from 'react-markdown'
+import rehypeSanitize from 'rehype-sanitize'
 
 export function ResponsePanel() {
   const { streamingResponse, isStreaming } = useGatewayStore()
@@ -17,7 +18,7 @@ export function ResponsePanel() {
       >
         <div className="bg-claw-surface/80 rounded-lg p-4 border border-claw-border max-h-64 overflow-y-auto">
           <div className="prose prose-invert prose-sm max-w-none text-claw-text">
-            <ReactMarkdown>{streamingResponse}</ReactMarkdown>
+            <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{streamingResponse}</ReactMarkdown>
           </div>
           {isStreaming && (
             <motion.div

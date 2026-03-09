@@ -47,9 +47,14 @@ export function createOverlayWindow(): BrowserWindow {
     e.preventDefault()
   })
 
-  // Redirect external link clicks to system browser
+  // Redirect external link clicks to system browser (with URL scheme validation)
   overlayWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    try {
+      const parsed = new URL(url)
+      if (['https:', 'http:'].includes(parsed.protocol)) {
+        shell.openExternal(url)
+      }
+    } catch { /* invalid URL, ignore */ }
     return { action: 'deny' }
   })
 

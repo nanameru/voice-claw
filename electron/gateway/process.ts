@@ -96,7 +96,7 @@ function writeOpenClawJson(config: Record<string, unknown>): void {
   commands.restart = true
   config.commands = commands
 
-  writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2) + '\n', 'utf8')
+  writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
 }
 
 function syncGatewayTokenToConfig(token: string): void {

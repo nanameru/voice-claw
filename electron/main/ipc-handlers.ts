@@ -3,7 +3,7 @@ import { sendToGateway, connectToGateway, disconnectGateway, getConnectionStatus
 import { getGatewayProcessManager } from '../gateway/process'
 import { updateShortcut } from './shortcut'
 import { hideOverlay, getOverlayWindow } from './overlay-window'
-import store from '../utils/store'
+import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
 
 // ── Security: Store key allowlist ──────────────────────
@@ -92,7 +92,13 @@ export function setupIpcHandlers(): void {
       logger.warn(`Blocked store:get for unauthorized key: ${key}`)
       throw new Error(`Store access denied for key: ${key}`)
     }
-    return store.get(key as any)
+    const value = store.get(key as any)
+    // For audio key, reconstruct with decrypted whisperApiKey
+    if (key === 'audio' && value && typeof value === 'object') {
+      const audio = value as Record<string, unknown>
+      return { ...audio, whisperApiKey: getSecureValue('whisperApiKey') }
+    }
+    return value
   })
 
   ipcMain.handle('store:set', (_event, key: string, value: unknown) => {
@@ -115,6 +121,25 @@ export function setupIpcHandlers(): void {
       if (!Number.isInteger(gw.port) || gw.port < 1 || gw.port > 65535) {
         throw new Error('Invalid gateway port')
       }
+    }
+    // Validate and securely store audio config
+    if (key === 'audio' && value && typeof value === 'object') {
+      const audio = value as Record<string, unknown>
+      const validEngines = ['webspeech', 'whisper']
+      if (audio.engine !== undefined && !validEngines.includes(audio.engine as string)) {
+        throw new Error('Invalid audio engine')
+      }
+      if (audio.deviceId !== undefined && audio.deviceId !== null && typeof audio.deviceId !== 'string') {
+        throw new Error('Invalid audio deviceId')
+      }
+      // Extract and encrypt whisperApiKey separately
+      if (typeof audio.whisperApiKey === 'string') {
+        setSecureValue('whisperApiKey', audio.whisperApiKey)
+      }
+      // Store audio config WITHOUT the plaintext API key
+      const { whisperApiKey: _key, ...safeAudio } = audio
+      store.set('audio' as any, { ...safeAudio, whisperApiKey: '' })
+      return
     }
     store.set(key as any, value)
   })
