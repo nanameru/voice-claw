@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, Component, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { VoiceOverlay } from './components/overlay/VoiceOverlay'
 import { SettingsPanel } from './components/settings/SettingsPanel'
@@ -8,29 +8,61 @@ import { useUIStore } from './stores/ui'
 import { useSettingsStore } from './stores/settings'
 import { useGatewayStore } from './stores/gateway'
 
-export default function App() {
+// Error boundary to catch React render errors
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          padding: 20,
+          color: '#ff6b6b',
+          background: '#0a0a0f',
+          fontFamily: 'monospace',
+          fontSize: 12,
+          whiteSpace: 'pre-wrap',
+          height: '100%',
+          overflow: 'auto',
+        }}>
+          <h2 style={{ color: '#feca57' }}>React Error</h2>
+          <p>{this.state.error.message}</p>
+          <pre>{this.state.error.stack}</pre>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+function AppContent() {
   const { view, setView, setVisible } = useUIStore()
-  const { loadSettings, onboarded } = useSettingsStore()
+  const { loadSettings } = useSettingsStore()
   const { setStatus } = useGatewayStore()
 
   useEffect(() => {
-    // Load settings on mount
     loadSettings().then(() => {
       if (!useSettingsStore.getState().onboarded) {
         setView('onboarding')
       }
+    }).catch((err) => {
+      console.error('Failed to load settings:', err)
     })
 
-    // Listen for overlay show/hide
     const unsubShow = window.voiceClaw.overlay.onShow(() => setVisible(true))
     const unsubHide = window.voiceClaw.overlay.onHide(() => setVisible(false))
 
-    // Listen for gateway status
     const unsubStatus = window.voiceClaw.gateway.onStatusChange((status) => {
       setStatus(status as 'connected' | 'connecting' | 'disconnected')
     })
 
-    // Get initial gateway status
     window.voiceClaw.gateway.getStatus().then((status) => setStatus(status))
 
     return () => {
@@ -49,5 +81,13 @@ export default function App() {
         {view === 'history' && <HistoryPanel key="history" />}
       </AnimatePresence>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   )
 }

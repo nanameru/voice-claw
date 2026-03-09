@@ -6,10 +6,16 @@ import { registerShortcut, unregisterShortcut } from './shortcut'
 import { createTray } from './tray'
 import { setupIpcHandlers } from './ipc-handlers'
 import { connectToGateway, disconnectGateway } from '../gateway/connection'
+import { getGatewayProcessManager } from '../gateway/process'
 import { logger } from '../utils/logger'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Catch uncaught exceptions to prevent crash dialogs
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception:', err.message)
+})
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -24,7 +30,7 @@ if (process.platform === 'darwin') {
 
 let mainWindow: BrowserWindow | null = null
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   logger.info('VoiceClaw starting...')
 
   // Setup IPC handlers before creating window
@@ -40,21 +46,69 @@ app.whenReady().then(() => {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'))
   }
 
+  // Show overlay once page is loaded, and open DevTools in dev mode
+  mainWindow.webContents.on('did-finish-load', () => {
+    logger.info('Page loaded, showing overlay')
+    showOverlay()
+    if (process.env.VITE_DEV_SERVER_URL) {
+      mainWindow?.webContents.openDevTools({ mode: 'detach' })
+    }
+  })
+
   // Setup global shortcut
   registerShortcut()
 
   // Create system tray
   createTray()
 
-  // Connect to gateway
-  connectToGateway(mainWindow)
+  // ── Gateway startup ──────────────────────────────
+  // 1. Ensure Gateway process is running (start if needed)
+  const gatewayManager = getGatewayProcessManager()
+
+  gatewayManager.on('status', (status) => {
+    logger.info(`Gateway status: ${status.state}${status.pid ? ` (pid=${status.pid})` : ''}`)
+    // Forward process status to renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send('gateway:process-status', status)
+      } catch { /* ignore */ }
+    }
+  })
+
+  gatewayManager.on('error', (err) => {
+    logger.error('Gateway process error:', err.message)
+  })
+
+  try {
+    await gatewayManager.start()
+    logger.info('Gateway process is running')
+  } catch (err) {
+    logger.error('Failed to start Gateway process:', err)
+    // Continue anyway — user might start it manually later
+  }
+
+  // 2. Connect WebSocket to Gateway
+  if (mainWindow) {
+    connectToGateway(mainWindow)
+  }
 
   logger.info('VoiceClaw ready')
 })
 
-app.on('will-quit', () => {
+app.on('will-quit', async () => {
   unregisterShortcut()
   disconnectGateway()
+
+  // Stop Gateway if we own the process
+  const gatewayManager = getGatewayProcessManager()
+  if (gatewayManager.ownsGatewayProcess()) {
+    logger.info('Stopping owned Gateway process...')
+    try {
+      await gatewayManager.stop()
+    } catch (err) {
+      logger.error('Error stopping Gateway:', err)
+    }
+  }
 })
 
 app.on('window-all-closed', () => {

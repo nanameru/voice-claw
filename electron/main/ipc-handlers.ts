@@ -1,5 +1,6 @@
 import { ipcMain, systemPreferences } from 'electron'
 import { sendToGateway, connectToGateway, disconnectGateway, getConnectionStatus } from '../gateway/connection'
+import { getGatewayProcessManager } from '../gateway/process'
 import { updateShortcut } from './shortcut'
 import { hideOverlay, getOverlayWindow } from './overlay-window'
 import store from '../utils/store'
@@ -75,5 +76,37 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('conversations:clear', () => {
     store.set('conversations', [])
+  })
+
+  // Gateway process management
+  ipcMain.handle('gateway:process-status', () => {
+    return getGatewayProcessManager().getStatus()
+  })
+
+  ipcMain.handle('gateway:process-start', async () => {
+    try {
+      await getGatewayProcessManager().start()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('gateway:process-stop', async () => {
+    try {
+      await getGatewayProcessManager().stop()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('gateway:process-restart', async () => {
+    try {
+      await getGatewayProcessManager().restart()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
   })
 }

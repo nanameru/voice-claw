@@ -22,6 +22,20 @@ let deviceIdentity: DeviceIdentity | null = null
 let currentWindow: BrowserWindow | null = null
 let gatewayToken: string = ''
 
+// Safe IPC send - prevents "Object has been destroyed" crash
+function safeSend(channel: string, ...args: unknown[]): void {
+  try {
+    if (currentWindow && !currentWindow.isDestroyed()) {
+      const wc = currentWindow.webContents
+      if (wc && !wc.isDestroyed()) {
+        wc.send(channel, ...args)
+      }
+    }
+  } catch (e) {
+    logger.error('safeSend error (ignored):', e)
+  }
+}
+
 const CLIENT_ID = 'gateway-client'
 const CLIENT_MODE = 'ui'
 const ROLE = 'operator'
@@ -61,7 +75,6 @@ function sendConnect(challengeNonce?: string): void {
   const signedAtMs = Date.now()
   const nonce = challengeNonce || crypto.randomUUID()
 
-  // Build device auth signature with the nonce
   const payload = buildDeviceAuthPayload({
     deviceId: deviceIdentity.deviceId,
     clientId: CLIENT_ID,
@@ -111,7 +124,7 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
   if (ws?.readyState === 1 && connected) return
   currentWindow = window
 
-  const identity = await ensureDeviceIdentity()
+  await ensureDeviceIdentity()
   if (!gatewayToken) gatewayToken = loadGatewayToken()
   const { host, port } = store.get('gateway')
   const url = `ws://${host}:${port}/ws`
@@ -130,7 +143,6 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
       try {
         const message = JSON.parse(data.toString())
 
-        // Handle challenge-response: gateway sends nonce, we re-sign and reconnect
         if (message.type === 'event' && message.event === 'connect.challenge') {
           const challengeNonce = message.payload?.nonce
           logger.info(`Received challenge, re-signing with nonce: ${challengeNonce?.slice(0, 8)}...`)
@@ -138,26 +150,24 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
           return
         }
 
-        // Handle handshake response
         if (message.type === 'res' && message.id?.startsWith('connect-')) {
           if (message.ok) {
             connected = true
             logger.info('Gateway handshake successful!')
-            window.webContents.send('gateway:status', 'connected')
+            safeSend('gateway:status', 'connected')
             if (reconnectTimer) {
               clearTimeout(reconnectTimer)
               reconnectTimer = null
             }
           } else {
             logger.error('Gateway handshake failed:', message.error || message)
-            window.webContents.send('gateway:status', 'disconnected')
+            safeSend('gateway:status', 'disconnected')
           }
           return
         }
 
-        // Handle RPC responses
         if (message.type === 'res') {
-          window.webContents.send('gateway:message', {
+          safeSend('gateway:message', {
             id: message.id,
             result: message.payload,
             ok: message.ok,
@@ -165,17 +175,15 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
           return
         }
 
-        // Handle events (agent streaming)
         if (message.type === 'event') {
-          window.webContents.send('gateway:event', {
+          safeSend('gateway:event', {
             event: message.event,
             payload: message.payload,
           })
           return
         }
 
-        // Fallback
-        window.webContents.send('gateway:message', message)
+        safeSend('gateway:message', message)
       } catch (e) {
         logger.error('Failed to parse gateway message:', e)
       }
@@ -184,27 +192,32 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
     ws.on('close', () => {
       logger.info('Gateway disconnected')
       connected = false
-      window.webContents.send('gateway:status', 'disconnected')
+      safeSend('gateway:status', 'disconnected')
       ws = null
-      scheduleReconnect(window)
+      scheduleReconnect()
     })
 
     ws.on('error', (err: Error) => {
       logger.error('Gateway error:', err.message)
       connected = false
-      window.webContents.send('gateway:status', 'disconnected')
+      safeSend('gateway:status', 'disconnected')
     })
   } catch (err) {
     logger.error('Failed to create WebSocket connection:', err)
-    scheduleReconnect(window)
+    scheduleReconnect()
   }
 }
 
-function scheduleReconnect(window: BrowserWindow): void {
+function scheduleReconnect(): void {
   if (reconnectTimer) return
+  // Don't reconnect if window is destroyed
+  if (!currentWindow || currentWindow.isDestroyed()) return
+
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
-    connectToGateway(window)
+    if (currentWindow && !currentWindow.isDestroyed()) {
+      connectToGateway(currentWindow)
+    }
   }, 5000)
 }
 
@@ -231,7 +244,10 @@ export function disconnectGateway(): void {
   }
   connected = false
   if (ws) {
-    ws.close()
+    // Remove all listeners before closing to prevent "Object has been destroyed"
+    const oldWs = ws
     ws = null
+    oldWs.removeAllListeners()
+    oldWs.close()
   }
 }

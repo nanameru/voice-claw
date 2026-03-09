@@ -19,20 +19,6 @@ export default defineConfig({
           },
         },
       },
-      {
-        entry: 'electron/preload/index.ts',
-        onstart(args) {
-          args.reload()
-        },
-        vite: {
-          build: {
-            outDir: 'dist-electron/preload',
-            rollupOptions: {
-              external: ['electron'],
-            },
-          },
-        },
-      },
     ]),
     renderer(),
   ],

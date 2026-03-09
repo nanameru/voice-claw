@@ -28,16 +28,19 @@ export function createOverlayWindow(): BrowserWindow {
     vibrancy: 'under-window',
     visualEffectState: 'active',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   })
 
-  overlayWindow.on('blur', () => {
-    hideOverlay()
-  })
+  // In dev mode, don't hide on blur so DevTools can be used
+  if (!process.env.VITE_DEV_SERVER_URL) {
+    overlayWindow.on('blur', () => {
+      hideOverlay()
+    })
+  }
 
   overlayWindow.on('closed', () => {
     overlayWindow = null
