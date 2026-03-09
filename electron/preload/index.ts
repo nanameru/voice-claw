@@ -18,6 +18,11 @@ const api = {
       ipcRenderer.on('gateway:status', handler)
       return () => ipcRenderer.removeListener('gateway:status', handler)
     },
+    onEvent: (callback: (event: { event: string; payload: unknown }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { event: string; payload: unknown }) => callback(data)
+      ipcRenderer.on('gateway:event', handler)
+      return () => ipcRenderer.removeListener('gateway:event', handler)
+    },
   },
 
   // Overlay

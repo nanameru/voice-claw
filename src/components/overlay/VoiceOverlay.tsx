@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useRef } from 'react'
 import { VoiceInput } from './VoiceInput'
 import { Transcription } from './Transcription'
 import { ResponsePanel } from './ResponsePanel'
@@ -7,16 +7,15 @@ import { useVoiceStore } from '../../stores/voice'
 import { useGatewayStore } from '../../stores/gateway'
 import { useUIStore } from '../../stores/ui'
 import { useConversationStore } from '../../stores/conversation'
-import { useSpeechRecognition } from '../../hooks/useSpeechRecognition'
 
 export function VoiceOverlay() {
-  const { transcript, isListening, clearTranscript } = useVoiceStore()
-  const { status, streamingResponse, clearResponse, setStreaming, appendResponse } = useGatewayStore()
+  const { transcript, isListening } = useVoiceStore()
+  const { status, clearResponse, setStreaming, appendResponse } = useGatewayStore()
   const { setView } = useUIStore()
   const { addConversation } = useConversationStore()
-  const { stopListening } = useSpeechRecognition()
+  const sessionKeyRef = useRef(`agent:main:${crypto.randomUUID()}`)
 
-  // Send transcript to gateway when user stops speaking
+  // Send transcript to gateway (ClawX-compatible protocol)
   const sendTranscript = useCallback(async () => {
     if (!transcript.trim()) return
     if (status !== 'connected') return
@@ -24,30 +23,64 @@ export function VoiceOverlay() {
     clearResponse()
     setStreaming(true)
 
-    await window.voiceClaw.gateway.send('chat', {
+    await window.voiceClaw.gateway.send('chat.send', {
+      sessionKey: sessionKeyRef.current,
       message: transcript.trim(),
+      deliver: false,
+      idempotencyKey: crypto.randomUUID(),
     })
   }, [transcript, status, clearResponse, setStreaming])
 
-  // Listen for gateway messages
+  // Listen for gateway events (ClawX agent streaming protocol)
   useEffect(() => {
+    const unsubEvent = window.voiceClaw.gateway.onEvent((data: any) => {
+      if (data.event === 'agent') {
+        const payload = data.payload
+        const phase = payload?.phase || payload?.state
+
+        if (phase === 'streaming' || phase === 'delta') {
+          // Extract streaming text
+          const msg = payload?.message || payload?.data
+          if (msg?.content) {
+            const text = typeof msg.content === 'string'
+              ? msg.content
+              : Array.isArray(msg.content)
+              ? msg.content.map((b: any) => b.text || '').join('')
+              : ''
+            if (text) appendResponse(text)
+          }
+        }
+
+        if (phase === 'final' || phase === 'completed') {
+          setStreaming(false)
+          addConversation({
+            id: crypto.randomUUID(),
+            timestamp: Date.now(),
+            transcript: transcript.trim(),
+            response: useGatewayStore.getState().streamingResponse,
+          })
+        }
+
+        if (phase === 'error') {
+          setStreaming(false)
+        }
+      }
+    })
+
+    // Also listen for direct RPC responses (fallback)
     const unsubMessage = window.voiceClaw.gateway.onMessage((message: any) => {
       if (message?.result?.chunk) {
         appendResponse(message.result.chunk)
       }
-      if (message?.result?.done) {
-        setStreaming(false)
-        // Save conversation
-        addConversation({
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          transcript: transcript.trim(),
-          response: useGatewayStore.getState().streamingResponse,
-        })
+      if (message?.result?.done || message?.ok === true) {
+        // RPC response completed
       }
     })
 
-    return unsubMessage
+    return () => {
+      unsubEvent()
+      unsubMessage()
+    }
   }, [appendResponse, setStreaming, addConversation, transcript])
 
   // Keyboard shortcuts within overlay
@@ -107,7 +140,7 @@ export function VoiceOverlay() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 pb-4">
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4 pb-4">
         <VoiceInput />
         <Transcription />
 
@@ -116,9 +149,7 @@ export function VoiceOverlay() {
           <motion.button
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
-            onClick={() => {
-              sendTranscript()
-            }}
+            onClick={sendTranscript}
             className="px-6 py-2 bg-claw-accent hover:bg-claw-accent/80 text-white text-sm rounded-lg transition-colors"
           >
             Send to OpenClaw

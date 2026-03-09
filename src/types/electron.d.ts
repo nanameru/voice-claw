@@ -6,6 +6,7 @@ export interface VoiceClawAPI {
     getStatus: () => Promise<'connected' | 'connecting' | 'disconnected'>
     onMessage: (callback: (message: unknown) => void) => () => void
     onStatusChange: (callback: (status: string) => void) => () => void
+    onEvent: (callback: (event: { event: string; payload: unknown }) => void) => () => void
   }
   overlay: {
     hide: () => Promise<void>
