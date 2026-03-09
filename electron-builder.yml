@@ -1,0 +1,22 @@
+appId: com.voiceclaw.app
+productName: VoiceClaw
+directories:
+  buildResources: resources
+files:
+  - dist
+  - dist-electron
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  darkModeSupport: true
+  extendInfo:
+    NSMicrophoneUsageDescription: "VoiceClaw needs microphone access for voice input"
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+    - deb
