@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect, useCallback, useRef } from 'react'
+import { useEffect, useCallback, useRef, useState } from 'react'
 import { VoiceInput } from './VoiceInput'
 import { Transcription } from './Transcription'
 import { ResponsePanel } from './ResponsePanel'
@@ -9,27 +9,40 @@ import { useUIStore } from '../../stores/ui'
 import { useConversationStore } from '../../stores/conversation'
 
 export function VoiceOverlay() {
-  const { transcript, isListening } = useVoiceStore()
+  const { transcript, isListening, error, setTranscript } = useVoiceStore()
   const { status, clearResponse, setStreaming, appendResponse } = useGatewayStore()
   const { setView } = useUIStore()
   const { addConversation } = useConversationStore()
   const sessionKeyRef = useRef(`agent:main:${crypto.randomUUID()}`)
+  const [textInput, setTextInput] = useState('')
+  const textInputRef = useRef<HTMLInputElement>(null)
 
-  // Send transcript to gateway (ClawX-compatible protocol)
-  const sendTranscript = useCallback(async () => {
-    if (!transcript.trim()) return
+  // Show text input when speech recognition fails
+  const speechUnavailable = !!error
+
+  // Send message to gateway (ClawX-compatible protocol)
+  const sendMessage = useCallback(async (message?: string) => {
+    const msg = (message || transcript).trim()
+    if (!msg) return
     if (status !== 'connected') return
 
     clearResponse()
     setStreaming(true)
 
+    // Clear inputs
+    if (message) {
+      setTextInput('')
+    } else {
+      setTranscript('')
+    }
+
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,
-      message: transcript.trim(),
+      message: msg,
       deliver: false,
       idempotencyKey: crypto.randomUUID(),
     })
-  }, [transcript, status, clearResponse, setStreaming])
+  }, [transcript, status, clearResponse, setStreaming, setTranscript])
 
   // Listen for gateway events (ClawX agent streaming protocol)
   useEffect(() => {
@@ -89,14 +102,15 @@ export function VoiceOverlay() {
       if (e.key === 'Escape') {
         window.voiceClaw.overlay.hide()
       }
-      if (e.key === 'Enter' && !e.shiftKey && transcript.trim() && !isListening) {
-        sendTranscript()
+      // Enter to send (only when not in text input - text input handles its own Enter)
+      if (e.key === 'Enter' && !e.shiftKey && transcript.trim() && !isListening && !speechUnavailable) {
+        sendMessage()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [transcript, isListening, sendTranscript])
+  }, [transcript, isListening, sendMessage, speechUnavailable])
 
   return (
     <motion.div
@@ -141,19 +155,59 @@ export function VoiceOverlay() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4 pb-4">
-        <VoiceInput />
-        <Transcription />
+        {!speechUnavailable && (
+          <>
+            <VoiceInput />
+            <Transcription />
 
-        {/* Send button */}
-        {transcript.trim() && !isListening && (
-          <motion.button
-            initial={{ opacity: 0, y: 5 }}
+            {/* Send button */}
+            {transcript.trim() && !isListening && (
+              <motion.button
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={() => sendMessage()}
+                className="px-6 py-2 bg-claw-accent hover:bg-claw-accent/80 text-white text-sm rounded-lg transition-colors"
+              >
+                Send to OpenClaw
+              </motion.button>
+            )}
+          </>
+        )}
+
+        {/* Text input fallback when speech recognition is unavailable */}
+        {speechUnavailable && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            onClick={sendTranscript}
-            className="px-6 py-2 bg-claw-accent hover:bg-claw-accent/80 text-white text-sm rounded-lg transition-colors"
+            className="w-full max-w-md flex flex-col items-center gap-3"
           >
-            Send to OpenClaw
-          </motion.button>
+            <p className="text-xs text-claw-text-dim text-center">
+              Voice input unavailable in Electron. Type your message:
+            </p>
+            <div className="w-full flex gap-2">
+              <input
+                ref={textInputRef}
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && textInput.trim()) {
+                    sendMessage(textInput)
+                  }
+                }}
+                placeholder="Type a message..."
+                className="flex-1 bg-claw-surface border border-claw-border rounded-lg px-3 py-2 text-sm text-claw-text placeholder-claw-text-dim focus:outline-none focus:border-claw-accent"
+                autoFocus
+              />
+              <button
+                onClick={() => sendMessage(textInput)}
+                disabled={!textInput.trim() || status !== 'connected'}
+                className="px-4 py-2 bg-claw-accent hover:bg-claw-accent/80 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
+              >
+                Send
+              </button>
+            </div>
+          </motion.div>
         )}
 
         <ResponsePanel />

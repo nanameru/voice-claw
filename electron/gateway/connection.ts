@@ -109,8 +109,9 @@ function sendConnect(challengeNonce?: string): void {
         platform: process.platform,
         mode: CLIENT_MODE,
       },
-      // Token is NOT sent in plaintext — auth relies on Ed25519 signed challenge-response
-      // The token is incorporated in the signed payload (buildDeviceAuthPayload) for verification
+      auth: {
+        token: gatewayToken,
+      },
       caps: [],
       role: ROLE,
       scopes: SCOPES,
