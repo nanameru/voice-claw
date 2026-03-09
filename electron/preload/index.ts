@@ -16,6 +16,7 @@ const INVOKE_ALLOWED = new Set([
   'store:set',
   'mic:check-permission',
   'mic:request-permission',
+  'audio:transcribe',
   'conversations:get',
   'conversations:add',
   'conversations:clear',
@@ -95,6 +96,11 @@ const api = {
   mic: {
     checkPermission: () => safeInvoke('mic:check-permission'),
     requestPermission: () => safeInvoke('mic:request-permission'),
+  },
+
+  // Audio transcription
+  audio: {
+    transcribe: (audioData: ArrayBuffer) => safeInvoke('audio:transcribe', audioData),
   },
 
   // Conversations

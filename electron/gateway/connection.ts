@@ -156,6 +156,7 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
     ws.on('message', (data: any) => {
       try {
         const message = JSON.parse(data.toString())
+        logger.info(`Gateway recv: type=${message.type} ${message.event || message.method || message.id || ''} ok=${message.ok ?? ''}`)
 
         if (message.type === 'event' && message.event === 'connect.challenge') {
           const challengeNonce = message.payload?.nonce
@@ -190,6 +191,12 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
         }
 
         if (message.type === 'event') {
+          // Log agent events payload for debugging
+          if (message.event === 'agent') {
+            const p = message.payload || {}
+            logger.info(`  agent event: stream=${p.stream} keys=${Object.keys(p).join(',')} data_keys=${p.data ? Object.keys(p.data).join(',') : 'none'}`)
+            logger.info(`  agent data: ${JSON.stringify(p.data || {}).slice(0, 200)}`)
+          }
           safeSend('gateway:event', {
             event: message.event,
             payload: message.payload,
@@ -237,7 +244,7 @@ function scheduleReconnect(): void {
 
 export function sendToGateway(method: string, params: Record<string, unknown>): void {
   if (!ws || !connected) {
-    logger.error('Gateway not connected')
+    logger.error('Gateway not connected, cannot send:', method)
     return
   }
 
@@ -248,6 +255,7 @@ export function sendToGateway(method: string, params: Record<string, unknown>): 
     params,
   }
 
+  logger.info(`Sending to gateway: ${method} (id: ${message.id})`)
   ws.send(JSON.stringify(message))
 }
 

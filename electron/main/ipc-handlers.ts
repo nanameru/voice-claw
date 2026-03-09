@@ -5,6 +5,7 @@ import { updateShortcut } from './shortcut'
 import { hideOverlay, getOverlayWindow } from './overlay-window'
 import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
+import { setupAudioHandlers } from '../audio/whisper'
 
 // ── Security: Store key allowlist ──────────────────────
 const STORE_ALLOWED_KEYS = new Set([
@@ -181,6 +182,9 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('conversations:clear', () => {
     store.set('conversations', [])
   })
+
+  // Audio transcription (Whisper API)
+  setupAudioHandlers()
 
   // Gateway process management
   ipcMain.handle('gateway:process-status', () => {

@@ -24,6 +24,9 @@ export interface VoiceClawAPI {
     checkPermission: () => Promise<string>
     requestPermission: () => Promise<boolean>
   }
+  audio: {
+    transcribe: (audioData: ArrayBuffer) => Promise<string>
+  }
   conversations: {
     get: () => Promise<Array<{
       id: string

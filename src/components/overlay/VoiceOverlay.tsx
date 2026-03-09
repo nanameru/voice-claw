@@ -6,15 +6,31 @@ import { useVoiceStore } from '../../stores/voice'
 import { useGatewayStore } from '../../stores/gateway'
 import { useUIStore } from '../../stores/ui'
 import { useConversationStore } from '../../stores/conversation'
+import { useAudioVisualizer } from '../../hooks/useAudioVisualizer'
+
+type OverlayStatus = 'idle' | 'recording' | 'transcribing' | 'responding'
 
 export function VoiceOverlay() {
-  const { transcript, setTranscript } = useVoiceStore()
+  const { setTranscript, setListening } = useVoiceStore()
   const { status, clearResponse, setStreaming, appendResponse, isStreaming } = useGatewayStore()
   const { setView } = useUIStore()
   const { addConversation } = useConversationStore()
   const sessionKeyRef = useRef(`agent:main:${crypto.randomUUID()}`)
   const [textInput, setTextInput] = useState('')
   const textInputRef = useRef<HTMLInputElement>(null)
+  const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('idle')
+  const [transcribedText, setTranscribedText] = useState('')
+
+  // MediaRecorder refs
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+
+  // Audio visualizer for live volume during recording
+  const { volume, start: startVisualizer, stop: stopVisualizer } = useAudioVisualizer()
+
+  // Track the last sent message for conversation history
+  const lastSentMessageRef = useRef('')
 
   // Send message to gateway (ClawX-compatible protocol)
   const sendMessage = useCallback(async (message?: string) => {
@@ -24,7 +40,9 @@ export function VoiceOverlay() {
 
     clearResponse()
     setStreaming(true)
+    setOverlayStatus('responding')
     setTextInput('')
+    lastSentMessageRef.current = msg
 
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,
@@ -34,37 +52,141 @@ export function VoiceOverlay() {
     })
   }, [textInput, status, clearResponse, setStreaming])
 
+  // Start recording audio via MediaRecorder
+  const startRecording = useCallback(async () => {
+    try {
+      // Request mic permission if needed
+      const permission = await window.voiceClaw.mic.checkPermission()
+      if (permission !== 'granted') {
+        await window.voiceClaw.mic.requestPermission()
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 16000,
+        },
+      })
+      streamRef.current = stream
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm',
+      })
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      mediaRecorder.onstop = async () => {
+        // Combine chunks into a single blob
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        audioChunksRef.current = []
+
+        if (audioBlob.size === 0) {
+          setOverlayStatus('idle')
+          return
+        }
+
+        // Transcribe via Whisper
+        setOverlayStatus('transcribing')
+        try {
+          const arrayBuffer = await audioBlob.arrayBuffer()
+          const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
+          if (text && text.trim()) {
+            setTranscribedText(text.trim())
+            setTranscript(text.trim())
+            // Auto-send to gateway
+            await sendMessage(text.trim())
+          } else {
+            setOverlayStatus('idle')
+          }
+        } catch (err) {
+          console.error('Transcription error:', err)
+          setOverlayStatus('idle')
+        }
+      }
+
+      mediaRecorder.start(250) // collect data every 250ms
+      setOverlayStatus('recording')
+      setListening(true)
+      startVisualizer()
+    } catch (err) {
+      console.error('Recording start error:', err)
+      setOverlayStatus('idle')
+    }
+  }, [sendMessage, setListening, setTranscript, startVisualizer])
+
+  // Stop recording
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+    setListening(false)
+    stopVisualizer()
+  }, [setListening, stopVisualizer])
+
+  // Toggle recording on orb click
+  const handleOrbClick = useCallback(() => {
+    if (overlayStatus === 'recording') {
+      stopRecording()
+    } else if (overlayStatus === 'idle') {
+      startRecording()
+    }
+    // Don't allow clicking while transcribing or responding
+  }, [overlayStatus, startRecording, stopRecording])
+
   // Listen for gateway events (ClawX agent streaming protocol)
   useEffect(() => {
     const unsubEvent = window.voiceClaw.gateway.onEvent((data: any) => {
       if (data.event === 'agent') {
         const payload = data.payload
-        const phase = payload?.phase || payload?.state
+        const stream = payload?.stream
+        const eventData = payload?.data
 
-        if (phase === 'streaming' || phase === 'delta') {
-          const msg = payload?.message || payload?.data
-          if (msg?.content) {
-            const text = typeof msg.content === 'string'
-              ? msg.content
-              : Array.isArray(msg.content)
-              ? msg.content.map((b: any) => b.text || '').join('')
-              : ''
-            if (text) appendResponse(text)
+        // stream="assistant" => text streaming from the AI
+        if (stream === 'assistant') {
+          if (eventData?.delta) {
+            appendResponse(eventData.delta)
           }
         }
 
-        if (phase === 'final' || phase === 'completed') {
-          setStreaming(false)
-          addConversation({
-            id: crypto.randomUUID(),
-            timestamp: Date.now(),
-            transcript: textInput.trim(),
-            response: useGatewayStore.getState().streamingResponse,
-          })
-        }
+        // stream="lifecycle" => run lifecycle events
+        if (stream === 'lifecycle') {
+          const phase = eventData?.phase
 
-        if (phase === 'error') {
-          setStreaming(false)
+          if (phase === 'start') {
+            clearResponse()
+            setStreaming(true)
+            setOverlayStatus('responding')
+          }
+
+          if (phase === 'end' || phase === 'done') {
+            setStreaming(false)
+            setOverlayStatus('idle')
+            setTranscribedText('')
+            addConversation({
+              id: crypto.randomUUID(),
+              timestamp: Date.now(),
+              transcript: lastSentMessageRef.current,
+              response: useGatewayStore.getState().streamingResponse,
+            })
+          }
+
+          if (phase === 'error') {
+            setStreaming(false)
+            setOverlayStatus('idle')
+          }
         }
       }
     })
@@ -79,19 +201,57 @@ export function VoiceOverlay() {
       unsubEvent()
       unsubMessage()
     }
-  }, [appendResponse, setStreaming, addConversation, textInput])
+  }, [appendResponse, setStreaming, addConversation, clearResponse])
+
+  // Cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [])
 
   // Keyboard shortcuts within overlay
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        window.voiceClaw.overlay.hide()
+        if (overlayStatus === 'recording') {
+          stopRecording()
+          setOverlayStatus('idle')
+        } else {
+          window.voiceClaw.overlay.hide()
+        }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [overlayStatus, stopRecording])
+
+  // Status text based on current state
+  const statusText = (() => {
+    switch (overlayStatus) {
+      case 'recording':
+        return 'Listening...'
+      case 'transcribing':
+        return 'Transcribing...'
+      case 'responding':
+        return 'AI responding...'
+      default:
+        return 'Click to speak'
+    }
+  })()
+
+  // Determine volume for Aura orb
+  const auraVolume = overlayStatus === 'recording'
+    ? volume
+    : isStreaming
+    ? 0.5
+    : 0
 
   return (
     <motion.div
@@ -136,31 +296,88 @@ export function VoiceOverlay() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 pb-2">
-        {/* Aura Orb - decorative visual */}
-        <div className="relative w-28 h-28 flex items-center justify-center">
+        {/* Aura Orb - click to record / click to stop */}
+        <button
+          onClick={handleOrbClick}
+          disabled={overlayStatus === 'transcribing' || overlayStatus === 'responding' || status !== 'connected'}
+          className="relative w-28 h-28 flex items-center justify-center cursor-pointer disabled:cursor-not-allowed group focus:outline-none"
+          aria-label={overlayStatus === 'recording' ? 'Stop recording' : 'Start recording'}
+        >
           <div className="absolute inset-0 overflow-hidden rounded-full">
-            <AuraVisualizer volume={isStreaming ? 0.5 : 0} className="w-full h-full" />
+            <AuraVisualizer volume={auraVolume} className="w-full h-full" />
           </div>
-          <div className="relative z-10 w-10 h-10 rounded-full flex items-center justify-center bg-claw-surface/60 border border-claw-border/50">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={isStreaming ? 'text-claw-accent' : 'text-claw-text-dim'}
-            >
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" x2="12" y1="19" y2="22" />
-            </svg>
+          {/* Recording ring indicator */}
+          {overlayStatus === 'recording' && (
+            <motion.div
+              className="absolute inset-0 rounded-full border-2 border-red-500/60"
+              animate={{ scale: [1, 1.08, 1], opacity: [0.6, 1, 0.6] }}
+              transition={{ duration: 1.5, repeat: Infinity }}
+            />
+          )}
+          <div className="relative z-10 w-10 h-10 rounded-full flex items-center justify-center bg-claw-surface/60 border border-claw-border/50 group-hover:bg-claw-surface/80 transition-colors">
+            {overlayStatus === 'recording' ? (
+              /* Stop icon (square) when recording */
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="text-red-400"
+              >
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              /* Mic icon when idle */
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={
+                  overlayStatus === 'responding'
+                    ? 'text-claw-accent'
+                    : overlayStatus === 'transcribing'
+                    ? 'text-claw-warning'
+                    : 'text-claw-text-dim group-hover:text-claw-text transition-colors'
+                }
+              >
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" x2="12" y1="19" y2="22" />
+              </svg>
+            )}
           </div>
-        </div>
+        </button>
 
-        {/* Text input - always visible */}
+        {/* Status text */}
+        <span className={`text-xs font-medium ${
+          overlayStatus === 'recording'
+            ? 'text-red-400'
+            : overlayStatus === 'transcribing'
+            ? 'text-claw-warning'
+            : overlayStatus === 'responding'
+            ? 'text-claw-accent'
+            : 'text-claw-text-dim'
+        }`}>
+          {statusText}
+        </span>
+
+        {/* Transcribed text display */}
+        {transcribedText && (
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-xs text-claw-text-dim italic max-w-lg text-center truncate"
+          >
+            &ldquo;{transcribedText}&rdquo;
+          </motion.div>
+        )}
+
+        {/* Text input - fallback */}
         <div className="w-full max-w-lg flex gap-2">
           <input
             ref={textInputRef}
@@ -173,7 +390,7 @@ export function VoiceOverlay() {
               }
             }}
             placeholder={status === 'connected' ? 'Type a message...' : 'Waiting for Gateway...'}
-            disabled={status !== 'connected'}
+            disabled={status !== 'connected' || overlayStatus === 'recording'}
             className="flex-1 bg-claw-surface border border-claw-border rounded-lg px-4 py-2.5 text-sm text-claw-text placeholder-claw-text-dim focus:outline-none focus:border-claw-accent disabled:opacity-40 transition-colors"
             autoFocus
           />
