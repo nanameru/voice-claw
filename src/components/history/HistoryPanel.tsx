@@ -18,9 +18,9 @@ export function HistoryPanel() {
       exit={{ opacity: 0, x: 20 }}
       className="w-full h-full flex flex-col p-4"
     >
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <h2 className="text-lg font-semibold text-claw-text">History</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {conversations.length > 0 && (
             <button
               onClick={clearConversations}

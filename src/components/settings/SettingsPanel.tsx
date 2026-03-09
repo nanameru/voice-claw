@@ -57,12 +57,13 @@ export function SettingsPanel() {
       exit={{ opacity: 0, x: 20 }}
       className="w-full h-full flex flex-col p-4 overflow-y-auto"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      {/* Header - draggable region */}
+      <div className="flex items-center justify-between mb-6" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <h2 className="text-lg font-semibold text-claw-text">Settings</h2>
         <button
           onClick={() => setView('overlay')}
           className="text-xs text-claw-text-dim hover:text-claw-text transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           Back
         </button>

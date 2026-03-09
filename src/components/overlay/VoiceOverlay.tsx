@@ -106,8 +106,8 @@ export function VoiceOverlay() {
       transition={{ duration: 0.15, ease: 'easeOut' }}
       className="w-full h-full flex flex-col"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
+      {/* Header - draggable region */}
+      <div className="flex items-center justify-between px-4 py-3" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="flex items-center gap-2">
           <div
             className={`w-2 h-2 rounded-full ${
@@ -123,7 +123,7 @@ export function VoiceOverlay() {
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button
             onClick={() => setView('history')}
             className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-2 py-1"
