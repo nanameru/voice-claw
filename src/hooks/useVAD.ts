@@ -38,14 +38,54 @@ interface UseVADOptions {
   onSpeechStart?: () => void
   onSpeechEnd?: (audioBlob: Blob, durationMs: number) => void
   onVADMisfire?: () => void
-  onVolumeChange?: (volume: number) => void
+  onInterimAudio?: (audioBlob: Blob) => void
 }
+
+const INTERIM_INTERVAL_MS = 1500 // Send interim audio every 1.5 seconds
 
 export function useVAD(options: UseVADOptions) {
   const vadRef = useRef<MicVAD | null>(null)
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const speechStartRef = useRef<number>(0)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const interimTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const startInterimRecording = useCallback((stream: MediaStream) => {
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+    chunksRef.current = []
+    recorderRef.current = recorder
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunksRef.current.push(e.data)
+      }
+    }
+
+    recorder.start(500) // Collect chunks every 500ms
+
+    // Send accumulated audio for interim transcription every INTERIM_INTERVAL_MS
+    interimTimerRef.current = setInterval(() => {
+      if (chunksRef.current.length > 0 && options.onInterimAudio) {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        options.onInterimAudio(blob)
+      }
+    }, INTERIM_INTERVAL_MS)
+  }, [options])
+
+  const stopInterimRecording = useCallback(() => {
+    if (interimTimerRef.current) {
+      clearInterval(interimTimerRef.current)
+      interimTimerRef.current = null
+    }
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop()
+    }
+    recorderRef.current = null
+    chunksRef.current = []
+  }, [])
 
   const start = useCallback(async () => {
     if (vadRef.current) return
@@ -65,25 +105,40 @@ export function useVAD(options: UseVADOptions) {
     }
 
     try {
+      // Get microphone stream to share between VAD and MediaRecorder
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+        },
+      })
+      mediaStreamRef.current = stream
+
       const vad = await MicVAD.new({
         // Serve VAD worklet + model from local public/ directory
         baseAssetPath: '/vad/',
+        stream, // Share the same microphone stream
 
         positiveSpeechThreshold: 0.5,
         negativeSpeechThreshold: 0.35,
-        redemptionFrames: 10, // ~300ms grace period after speech ends
-        minSpeechFrames: 5,   // ~150ms minimum speech to avoid false positives
-        preSpeechPadFrames: 10, // ~300ms audio before speech start
+        redemptionFrames: 10,
+        minSpeechFrames: 5,
+        preSpeechPadFrames: 10,
 
         onSpeechStart: () => {
           speechStartRef.current = Date.now()
           setIsSpeaking(true)
+          // Start interim recording for real-time transcription
+          if (mediaStreamRef.current) {
+            startInterimRecording(mediaStreamRef.current)
+          }
           options.onSpeechStart?.()
         },
 
         onSpeechEnd: (audio: Float32Array) => {
           const durationMs = Date.now() - speechStartRef.current
           setIsSpeaking(false)
+          stopInterimRecording()
 
           // Convert to WAV blob (16kHz mono PCM)
           const wavBlob = float32ToWav(audio, 16000)
@@ -92,6 +147,7 @@ export function useVAD(options: UseVADOptions) {
 
         onVADMisfire: () => {
           setIsSpeaking(false)
+          stopInterimRecording()
           options.onVADMisfire?.()
         },
       })
@@ -102,17 +158,22 @@ export function useVAD(options: UseVADOptions) {
     } catch (err) {
       console.error('VAD start error:', err)
     }
-  }, [options])
+  }, [options, startInterimRecording, stopInterimRecording])
 
   const stop = useCallback(() => {
+    stopInterimRecording()
     if (vadRef.current) {
       vadRef.current.pause()
       vadRef.current.destroy()
       vadRef.current = null
     }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop())
+      mediaStreamRef.current = null
+    }
     setIsListening(false)
     setIsSpeaking(false)
-  }, [])
+  }, [stopInterimRecording])
 
   return { isListening, isSpeaking, start, stop }
 }

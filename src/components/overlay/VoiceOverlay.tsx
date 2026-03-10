@@ -24,7 +24,9 @@ export function VoiceOverlay() {
   const textInputRef = useRef<HTMLInputElement>(null)
   const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('idle')
   const [transcribedText, setTranscribedText] = useState('')
+  const [interimText, setInterimText] = useState('')
   const [vadActive, setVadActive] = useState(false)
+  const interimBusyRef = useRef(false)
 
   // Sync TTS enabled state from settings
   const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
@@ -71,6 +73,25 @@ export function VoiceOverlay() {
     activity.getState().addStep('responding')
   }, [textInput, status, clearResponse, setStreaming])
 
+  // Interim transcription (real-time, display only, don't send to gateway)
+  const transcribeInterim = useCallback(async (audioBlob: Blob) => {
+    if (interimBusyRef.current) return // Skip if previous interim is still processing
+    interimBusyRef.current = true
+
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer()
+      const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
+      if (text && text.trim()) {
+        setInterimText(text.trim())
+      }
+    } catch (err) {
+      // Interim failures are non-critical, ignore silently
+      console.debug('Interim transcription error:', err)
+    } finally {
+      interimBusyRef.current = false
+    }
+  }, [])
+
   // Transcribe audio blob and send to gateway
   const transcribeAndSend = useCallback(async (audioBlob: Blob) => {
     setOverlayStatus('transcribing')
@@ -106,12 +127,14 @@ export function VoiceOverlay() {
       // Stop TTS if speaking
       useTtsStore.getState().stop()
       setOverlayStatus('speaking')
+      setInterimText('')
       setListening(true)
       useActivityStore.getState().startActivity()
       useActivityStore.getState().addStep('recording')
     },
     onSpeechEnd: (audioBlob: Blob, durationMs: number) => {
       setListening(false)
+      setInterimText('')
       useActivityStore.getState().completeStep('recording')
 
       if (durationMs < 200) {
@@ -124,10 +147,14 @@ export function VoiceOverlay() {
       // Auto-transcribe and send
       transcribeAndSend(audioBlob)
     },
+    onInterimAudio: (audioBlob: Blob) => {
+      transcribeInterim(audioBlob)
+    },
     onVADMisfire: () => {
       setOverlayStatus('listening')
+      setInterimText('')
     },
-  }), [setListening, transcribeAndSend])
+  }), [setListening, transcribeAndSend, transcribeInterim])
 
   // VAD hook
   const { isListening: vadListening, isSpeaking: vadSpeaking, start: startVAD, stop: stopVAD } = useVAD(vadOptions)
@@ -419,8 +446,20 @@ export function VoiceOverlay() {
           {statusText}
         </span>
 
-        {/* Transcribed text */}
-        {transcribedText && (
+        {/* Real-time interim transcription */}
+        {interimText && vadSpeaking && (
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-sm text-emerald-300 max-w-lg text-center"
+          >
+            {interimText}
+            <span className="animate-pulse">...</span>
+          </motion.div>
+        )}
+
+        {/* Final transcribed text */}
+        {transcribedText && !vadSpeaking && (
           <motion.div
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
