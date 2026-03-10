@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect, useCallback, useRef, useState } from 'react'
+import { useEffect, useCallback, useRef, useState, useMemo } from 'react'
 import { AuraVisualizer } from './AuraVisualizer'
 import { ResponsePanel } from './ResponsePanel'
 import { ActivityPanel } from './ActivityPanel'
@@ -7,12 +7,12 @@ import { useVoiceStore } from '../../stores/voice'
 import { useGatewayStore } from '../../stores/gateway'
 import { useUIStore } from '../../stores/ui'
 import { useConversationStore } from '../../stores/conversation'
-import { useAudioVisualizer } from '../../hooks/useAudioVisualizer'
 import { useTtsStore } from '../../stores/tts'
 import { useSettingsStore } from '../../stores/settings'
 import { useActivityStore } from '../../stores/activity'
+import { useVAD } from '../../hooks/useVAD'
 
-type OverlayStatus = 'idle' | 'recording' | 'transcribing' | 'responding'
+type OverlayStatus = 'idle' | 'listening' | 'speaking' | 'transcribing' | 'responding'
 
 export function VoiceOverlay() {
   const { setTranscript, setListening } = useVoiceStore()
@@ -24,6 +24,7 @@ export function VoiceOverlay() {
   const textInputRef = useRef<HTMLInputElement>(null)
   const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('idle')
   const [transcribedText, setTranscribedText] = useState('')
+  const [vadActive, setVadActive] = useState(false)
 
   // Sync TTS enabled state from settings
   const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
@@ -31,19 +32,11 @@ export function VoiceOverlay() {
     useTtsStore.getState().setEnabled(settingsTtsEnabled)
   }, [settingsTtsEnabled])
 
-  // MediaRecorder refs
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-  const streamRef = useRef<MediaStream | null>(null)
-
-  // Audio visualizer for live volume during recording
-  const { volume, start: startVisualizer, stop: stopVisualizer } = useAudioVisualizer()
-
   // TTS store
   const isTtsSpeaking = useTtsStore((s) => s.isSpeaking)
   const ttsStop = useTtsStore((s) => s.stop)
 
-  // Activity tracking - use getState() to avoid re-render loops
+  // Activity tracking
   const activity = useActivityStore
 
   // Track the last sent message for conversation history
@@ -61,7 +54,6 @@ export function VoiceOverlay() {
     setTextInput('')
     lastSentMessageRef.current = msg
 
-    // Start activity if not already started (text input case)
     if (!activity.getState().currentEntryId) {
       activity.getState().startActivity()
       activity.getState().setUserInput(msg)
@@ -77,115 +69,83 @@ export function VoiceOverlay() {
 
     activity.getState().completeStep('sending')
     activity.getState().addStep('responding')
-
   }, [textInput, status, clearResponse, setStreaming])
 
-  // Start recording audio via MediaRecorder
-  const startRecording = useCallback(async () => {
-    // Stop any TTS playback before recording
-    ttsStop()
+  // Transcribe audio blob and send to gateway
+  const transcribeAndSend = useCallback(async (audioBlob: Blob) => {
+    setOverlayStatus('transcribing')
+    const sizeKB = (audioBlob.size / 1024).toFixed(0)
+    activity.getState().addStep('transcribing', `${sizeKB}KB`)
 
     try {
-      // Request mic permission if needed
-      const permission = await window.voiceClaw.mic.checkPermission()
-      if (permission !== 'granted') {
-        await window.voiceClaw.mic.requestPermission()
+      const arrayBuffer = await audioBlob.arrayBuffer()
+      const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
+      activity.getState().completeStep('transcribing')
+
+      if (text && text.trim()) {
+        setTranscribedText(text.trim())
+        setTranscript(text.trim())
+        activity.getState().setTranscribedText(text.trim())
+        await sendMessage(text.trim())
+      } else {
+        setOverlayStatus(vadActive ? 'listening' : 'idle')
+        activity.getState().failActivity('No speech detected')
       }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 16000,
-        },
-      })
-      streamRef.current = stream
-
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : 'audio/webm',
-      })
-      mediaRecorderRef.current = mediaRecorder
-      audioChunksRef.current = []
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      mediaRecorder.onstop = async () => {
-        // Combine chunks into a single blob
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        audioChunksRef.current = []
-
-        activity.getState().completeStep('recording')
-
-        if (audioBlob.size === 0) {
-          setOverlayStatus('idle')
-          activity.getState().failActivity('Empty recording')
-          return
-        }
-
-        // Transcribe via Whisper
-        setOverlayStatus('transcribing')
-        activity.getState().addStep('transcribing', `${(audioBlob.size / 1024).toFixed(0)}KB`)
-        try {
-          const arrayBuffer = await audioBlob.arrayBuffer()
-          const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
-          activity.getState().completeStep('transcribing')
-          if (text && text.trim()) {
-            setTranscribedText(text.trim())
-            setTranscript(text.trim())
-            activity.getState().setTranscribedText(text.trim())
-            // Auto-send to gateway
-            await sendMessage(text.trim())
-          } else {
-            setOverlayStatus('idle')
-            activity.getState().failActivity('No speech detected')
-          }
-        } catch (err) {
-          console.error('Transcription error:', err)
-          setOverlayStatus('idle')
-          activity.getState().failActivity(`Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`)
-        }
-      }
-
-      mediaRecorder.start(250) // collect data every 250ms
-      setOverlayStatus('recording')
-      setListening(true)
-      startVisualizer()
-      activity.getState().startActivity()
-      activity.getState().addStep('recording')
     } catch (err) {
-      console.error('Recording start error:', err)
+      console.error('Transcription error:', err)
+      setOverlayStatus(vadActive ? 'listening' : 'idle')
+      activity.getState().failActivity(
+        `Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`
+      )
+    }
+  }, [sendMessage, setTranscript, vadActive])
+
+  // VAD callbacks (memoized to avoid re-creating VAD)
+  const vadOptions = useMemo(() => ({
+    onSpeechStart: () => {
+      // Stop TTS if speaking
+      useTtsStore.getState().stop()
+      setOverlayStatus('speaking')
+      setListening(true)
+      useActivityStore.getState().startActivity()
+      useActivityStore.getState().addStep('recording')
+    },
+    onSpeechEnd: (audioBlob: Blob, durationMs: number) => {
+      setListening(false)
+      useActivityStore.getState().completeStep('recording')
+
+      if (durationMs < 200) {
+        // Too short, ignore
+        setOverlayStatus('listening')
+        useActivityStore.getState().failActivity('Too short')
+        return
+      }
+
+      // Auto-transcribe and send
+      transcribeAndSend(audioBlob)
+    },
+    onVADMisfire: () => {
+      setOverlayStatus('listening')
+    },
+  }), [setListening, transcribeAndSend])
+
+  // VAD hook
+  const { isListening: vadListening, isSpeaking: vadSpeaking, start: startVAD, stop: stopVAD } = useVAD(vadOptions)
+
+  // Toggle VAD mode (auto-conversation)
+  const toggleVAD = useCallback(async () => {
+    if (vadActive) {
+      stopVAD()
+      setVadActive(false)
       setOverlayStatus('idle')
+      setListening(false)
+    } else {
+      ttsStop()
+      setVadActive(true)
+      setOverlayStatus('listening')
+      await startVAD()
     }
-  }, [sendMessage, setListening, setTranscript, startVisualizer, ttsStop])
-
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop())
-      streamRef.current = null
-    }
-    setListening(false)
-    stopVisualizer()
-  }, [setListening, stopVisualizer])
-
-  // Toggle recording on orb click
-  const handleOrbClick = useCallback(() => {
-    if (overlayStatus === 'recording') {
-      stopRecording()
-    } else if (overlayStatus === 'idle') {
-      startRecording()
-    }
-    // Don't allow clicking while transcribing or responding
-  }, [overlayStatus, startRecording, stopRecording])
+  }, [vadActive, startVAD, stopVAD, ttsStop, setListening])
 
   // Listen for gateway events (ClawX agent streaming protocol)
   useEffect(() => {
@@ -195,14 +155,12 @@ export function VoiceOverlay() {
         const stream = payload?.stream
         const eventData = payload?.data
 
-        // stream="assistant" => text streaming from the AI
         if (stream === 'assistant') {
           if (eventData?.delta) {
             appendResponse(eventData.delta)
           }
         }
 
-        // stream="lifecycle" => run lifecycle events
         if (stream === 'lifecycle') {
           const phase = eventData?.phase
 
@@ -214,7 +172,6 @@ export function VoiceOverlay() {
 
           if (phase === 'end' || phase === 'done') {
             setStreaming(false)
-            setOverlayStatus('idle')
             setTranscribedText('')
             const response = useGatewayStore.getState().streamingResponse
             addConversation({
@@ -227,7 +184,7 @@ export function VoiceOverlay() {
             act.completeStep('responding')
             act.setAiResponse(response)
 
-            // Speak AI response via TTS (direct synthesis, no LLM)
+            // Speak AI response via TTS
             const tts = useTtsStore.getState()
             if (tts.enabled && response) {
               act.addStep('tts')
@@ -236,23 +193,29 @@ export function VoiceOverlay() {
                 act.addStep('done')
                 act.completeStep('done')
                 act.completeActivity()
+                // Return to listening if VAD is active
+                setOverlayStatus(
+                  useActivityStore.getState().currentEntryId ? 'responding' : 'listening'
+                )
               }).catch(() => {
                 act.addStep('done')
                 act.completeStep('done')
                 act.completeActivity()
+                setOverlayStatus('listening')
               })
             } else {
               act.addStep('done')
               act.completeStep('done')
               act.completeActivity()
+              // Return to listening state if VAD is active
+              setOverlayStatus(vadActive ? 'listening' : 'idle')
             }
           }
 
           if (phase === 'error') {
             setStreaming(false)
-            setOverlayStatus('idle')
-            const act = useActivityStore.getState()
-            act.failActivity('AI response error')
+            setOverlayStatus(vadActive ? 'listening' : 'idle')
+            useActivityStore.getState().failActivity('AI response error')
           }
         }
       }
@@ -268,27 +231,24 @@ export function VoiceOverlay() {
       unsubEvent()
       unsubMessage()
     }
-  }, [appendResponse, setStreaming, addConversation, clearResponse])
+  }, [appendResponse, setStreaming, addConversation, clearResponse, vadActive])
 
-  // Cleanup recording on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop()
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-      }
+      stopVAD()
     }
-  }, [])
+  }, [stopVAD])
 
-  // Keyboard shortcuts within overlay
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (overlayStatus === 'recording') {
-          stopRecording()
+        if (vadActive) {
+          stopVAD()
+          setVadActive(false)
           setOverlayStatus('idle')
+          setListening(false)
         } else {
           window.voiceClaw.overlay.hide()
         }
@@ -297,25 +257,29 @@ export function VoiceOverlay() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [overlayStatus, stopRecording])
+  }, [vadActive, stopVAD, setListening])
 
-  // Status text based on current state
+  // Status text
   const statusText = (() => {
     switch (overlayStatus) {
-      case 'recording':
-        return 'Listening...'
+      case 'listening':
+        return 'Listening... (auto)'
+      case 'speaking':
+        return 'Detecting speech...'
       case 'transcribing':
         return 'Transcribing...'
       case 'responding':
         return 'AI responding...'
       default:
-        return 'Click to speak'
+        return 'Click to start'
     }
   })()
 
   // Determine volume for Aura orb
-  const auraVolume = overlayStatus === 'recording'
-    ? volume
+  const auraVolume = vadSpeaking
+    ? 0.8
+    : vadListening
+    ? 0.15
     : isTtsSpeaking
     ? 0.6
     : isStreaming
@@ -330,7 +294,7 @@ export function VoiceOverlay() {
       transition={{ duration: 0.15, ease: 'easeOut' }}
       className="w-full h-full flex flex-col"
     >
-      {/* Header - draggable region */}
+      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="flex items-center gap-2">
           <div
@@ -345,18 +309,33 @@ export function VoiceOverlay() {
           <span className="text-xs text-claw-text-dim">
             {status === 'connected' ? 'Gateway Connected' : 'Disconnected'}
           </span>
+          {vadActive && (
+            <span className="text-[10px] text-claw-accent font-medium ml-1">AUTO</span>
+          )}
         </div>
 
-        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button
+            onClick={() => setView('skills')}
+            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
+          >
+            Skills
+          </button>
+          <button
+            onClick={() => setView('cron')}
+            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
+          >
+            Cron
+          </button>
           <button
             onClick={() => setView('history')}
-            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-2 py-1"
+            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
           >
             History
           </button>
           <button
             onClick={() => setView('settings')}
-            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-2 py-1"
+            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
           >
             Settings
           </button>
@@ -365,54 +344,57 @@ export function VoiceOverlay() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 pb-2">
-        {/* Aura Orb - click to record / click to stop */}
+        {/* Aura Orb */}
         <button
-          onClick={handleOrbClick}
-          disabled={overlayStatus === 'transcribing' || overlayStatus === 'responding' || status !== 'connected'}
+          onClick={toggleVAD}
+          disabled={status !== 'connected'}
           className="relative w-28 h-28 flex items-center justify-center cursor-pointer disabled:cursor-not-allowed group focus:outline-none"
-          aria-label={overlayStatus === 'recording' ? 'Stop recording' : 'Start recording'}
+          aria-label={vadActive ? 'Stop auto-conversation' : 'Start auto-conversation'}
         >
           <div className="absolute inset-0 overflow-hidden rounded-full">
             <AuraVisualizer volume={auraVolume} className="w-full h-full" />
           </div>
-          {/* Recording ring indicator */}
-          {overlayStatus === 'recording' && (
+          {/* Speaking indicator */}
+          {vadSpeaking && (
             <motion.div
-              className="absolute inset-0 rounded-full border-2 border-red-500/60"
+              className="absolute inset-0 rounded-full border-2 border-emerald-400/60"
               animate={{ scale: [1, 1.08, 1], opacity: [0.6, 1, 0.6] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
+              transition={{ duration: 1, repeat: Infinity }}
+            />
+          )}
+          {/* Listening pulse */}
+          {vadListening && !vadSpeaking && overlayStatus === 'listening' && (
+            <motion.div
+              className="absolute inset-0 rounded-full border border-claw-accent/30"
+              animate={{ scale: [1, 1.04, 1], opacity: [0.3, 0.6, 0.3] }}
+              transition={{ duration: 2, repeat: Infinity }}
             />
           )}
           <div className="relative z-10 w-10 h-10 rounded-full flex items-center justify-center bg-claw-surface/60 border border-claw-border/50 group-hover:bg-claw-surface/80 transition-colors">
-            {overlayStatus === 'recording' ? (
-              /* Stop icon (square) when recording */
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="text-red-400"
-              >
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
+            {vadActive ? (
+              vadSpeaking ? (
+                /* Waveform icon when speaking */
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                  <path d="M2 12h2m4-6v12m4-8v4m4-10v16m4-12v8" strokeLinecap="round" />
+                </svg>
+              ) : (
+                /* Active mic icon */
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  className={
+                    overlayStatus === 'responding' ? 'text-claw-accent'
+                    : overlayStatus === 'transcribing' ? 'text-claw-warning'
+                    : 'text-claw-success'
+                  }
+                >
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" x2="12" y1="19" y2="22" />
+                </svg>
+              )
             ) : (
-              /* Mic icon when idle */
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={
-                  overlayStatus === 'responding'
-                    ? 'text-claw-accent'
-                    : overlayStatus === 'transcribing'
-                    ? 'text-claw-warning'
-                    : 'text-claw-text-dim group-hover:text-claw-text transition-colors'
-                }
+              /* Idle mic icon */
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className="text-claw-text-dim group-hover:text-claw-text transition-colors"
               >
                 <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
@@ -424,8 +406,10 @@ export function VoiceOverlay() {
 
         {/* Status text */}
         <span className={`text-xs font-medium ${
-          overlayStatus === 'recording'
-            ? 'text-red-400'
+          vadSpeaking
+            ? 'text-emerald-400'
+            : overlayStatus === 'listening'
+            ? 'text-claw-success'
             : overlayStatus === 'transcribing'
             ? 'text-claw-warning'
             : overlayStatus === 'responding'
@@ -435,7 +419,7 @@ export function VoiceOverlay() {
           {statusText}
         </span>
 
-        {/* Transcribed text display */}
+        {/* Transcribed text */}
         {transcribedText && (
           <motion.div
             initial={{ opacity: 0, y: 5 }}
@@ -446,7 +430,7 @@ export function VoiceOverlay() {
           </motion.div>
         )}
 
-        {/* Text input - fallback */}
+        {/* Text input fallback */}
         <div className="w-full max-w-lg flex gap-2">
           <input
             ref={textInputRef}
@@ -459,7 +443,7 @@ export function VoiceOverlay() {
               }
             }}
             placeholder={status === 'connected' ? 'Type a message...' : 'Waiting for Gateway...'}
-            disabled={status !== 'connected' || overlayStatus === 'recording'}
+            disabled={status !== 'connected' || vadActive}
             className="flex-1 bg-claw-surface border border-claw-border rounded-lg px-4 py-2.5 text-sm text-claw-text placeholder-claw-text-dim focus:outline-none focus:border-claw-accent disabled:opacity-40 transition-colors"
             autoFocus
           />
@@ -473,16 +457,27 @@ export function VoiceOverlay() {
         </div>
 
         <ResponsePanel />
-
         <ActivityPanel />
       </div>
 
-      {/* Footer hint */}
+      {/* Footer */}
       <div className="px-4 py-2 text-center">
         <span className="text-[10px] text-claw-text-dim">
-          Press <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Esc</kbd> to close
-          {' · '}
-          <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Enter</kbd> to send
+          {vadActive ? (
+            <>
+              <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Esc</kbd> to stop
+              {' · '}
+              Auto-detecting speech via Silero VAD
+            </>
+          ) : (
+            <>
+              Click orb to start
+              {' · '}
+              <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Enter</kbd> to send
+              {' · '}
+              <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Esc</kbd> to close
+            </>
+          )}
         </span>
       </div>
     </motion.div>

@@ -15,12 +15,21 @@ import {
   type DeviceIdentity,
 } from '../utils/device-identity'
 
-let ws: any = null
+let ws: WebSocket | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
 let connected = false
 let deviceIdentity: DeviceIdentity | null = null
 let currentWindow: BrowserWindow | null = null
 let gatewayToken: string = ''
+
+// ── Promise-based RPC support ────────────────────────
+interface PendingRequest {
+  resolve: (value: unknown) => void
+  reject: (reason: Error) => void
+  timer: NodeJS.Timeout
+}
+const pendingRequests = new Map<string, PendingRequest>()
+const DEFAULT_RPC_TIMEOUT = 15_000
 
 // Safe IPC send - prevents "Object has been destroyed" crash
 function safeSend(channel: string, ...args: unknown[]): void {
@@ -153,7 +162,7 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
       logger.info('WebSocket open, waiting for connect.challenge...')
     })
 
-    ws.on('message', (data: any) => {
+    ws.on('message', (data: WebSocket.RawData) => {
       try {
         const message = JSON.parse(data.toString())
         logger.info(`Gateway recv: type=${message.type} ${message.event || message.method || message.id || ''} ok=${message.ok ?? ''}`)
@@ -182,6 +191,18 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
         }
 
         if (message.type === 'res') {
+          // Resolve pending RPC promises
+          const pending = pendingRequests.get(message.id)
+          if (pending) {
+            clearTimeout(pending.timer)
+            pendingRequests.delete(message.id)
+            if (message.ok) {
+              pending.resolve(message.payload)
+            } else {
+              pending.reject(new Error(message.error?.message || `RPC failed: ${message.id}`))
+            }
+          }
+          // Also forward to renderer for fire-and-forget sends
           safeSend('gateway:message', {
             id: message.id,
             result: message.payload,
@@ -191,7 +212,6 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
         }
 
         if (message.type === 'event') {
-          // Log agent events payload for debugging
           if (message.event === 'agent') {
             const p = message.payload || {}
             logger.info(`  agent event: stream=${p.stream} keys=${Object.keys(p).join(',')} data_keys=${p.data ? Object.keys(p.data).join(',') : 'none'}`)
@@ -259,14 +279,51 @@ export function sendToGateway(method: string, params: Record<string, unknown>): 
   ws.send(JSON.stringify(message))
 }
 
+/**
+ * Promise-based RPC call to gateway. Waits for response matching the request ID.
+ */
+export function rpcGateway(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    if (!ws || !connected) {
+      reject(new Error('Gateway not connected'))
+      return
+    }
+
+    const id = crypto.randomUUID()
+    const timeout = timeoutMs || DEFAULT_RPC_TIMEOUT
+
+    const timer = setTimeout(() => {
+      pendingRequests.delete(id)
+      reject(new Error(`RPC timeout: ${method} (${timeout}ms)`))
+    }, timeout)
+
+    pendingRequests.set(id, { resolve, reject, timer })
+
+    const message = {
+      type: 'req',
+      id,
+      method,
+      params,
+    }
+
+    logger.info(`RPC to gateway: ${method} (id: ${id})`)
+    ws!.send(JSON.stringify(message))
+  })
+}
+
 export function disconnectGateway(): void {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  // Reject all pending RPC requests
+  for (const [id, pending] of pendingRequests) {
+    clearTimeout(pending.timer)
+    pending.reject(new Error('Gateway disconnected'))
+    pendingRequests.delete(id)
+  }
   connected = false
   if (ws) {
-    // Remove all listeners before closing to prevent "Object has been destroyed"
     const oldWs = ws
     ws = null
     oldWs.removeAllListeners()

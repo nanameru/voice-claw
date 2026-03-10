@@ -6,6 +6,7 @@ const INVOKE_ALLOWED = new Set([
   'gateway:connect',
   'gateway:disconnect',
   'gateway:status',
+  'gateway:rpc',
   'gateway:process-status',
   'gateway:process-start',
   'gateway:process-stop',
@@ -53,6 +54,8 @@ const api = {
   gateway: {
     send: (method: string, params: Record<string, unknown>) =>
       safeInvoke('gateway:send', method, params),
+    rpc: (method: string, params?: Record<string, unknown>, timeoutMs?: number) =>
+      safeInvoke('gateway:rpc', method, params, timeoutMs),
     connect: () => safeInvoke('gateway:connect'),
     disconnect: () => safeInvoke('gateway:disconnect'),
     getStatus: () => safeInvoke('gateway:status'),

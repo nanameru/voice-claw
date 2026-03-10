@@ -4,6 +4,8 @@ import { VoiceOverlay } from './components/overlay/VoiceOverlay'
 import { SettingsPanel } from './components/settings/SettingsPanel'
 import { OnboardingFlow } from './components/onboarding/OnboardingFlow'
 import { HistoryPanel } from './components/history/HistoryPanel'
+import { SkillsPanel } from './components/skills/SkillsPanel'
+import { CronPanel } from './components/cron/CronPanel'
 import { useUIStore } from './stores/ui'
 import { useSettingsStore } from './stores/settings'
 import { useGatewayStore } from './stores/gateway'
@@ -79,6 +81,8 @@ function AppContent() {
         {view === 'overlay' && <VoiceOverlay key="overlay" />}
         {view === 'settings' && <SettingsPanel key="settings" />}
         {view === 'history' && <HistoryPanel key="history" />}
+        {view === 'skills' && <SkillsPanel key="skills" />}
+        {view === 'cron' && <CronPanel key="cron" />}
       </AnimatePresence>
     </div>
   )

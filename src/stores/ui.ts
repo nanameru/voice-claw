@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type View = 'overlay' | 'settings' | 'history' | 'onboarding'
+type View = 'overlay' | 'settings' | 'history' | 'onboarding' | 'skills' | 'cron'
 
 interface UIState {
   view: View

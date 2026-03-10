@@ -1,5 +1,5 @@
 import { ipcMain, systemPreferences } from 'electron'
-import { sendToGateway, connectToGateway, disconnectGateway, getConnectionStatus } from '../gateway/connection'
+import { sendToGateway, rpcGateway, connectToGateway, disconnectGateway, getConnectionStatus } from '../gateway/connection'
 import { getGatewayProcessManager } from '../gateway/process'
 import { updateShortcut } from './shortcut'
 import { hideOverlay, getOverlayWindow } from './overlay-window'
@@ -25,6 +25,25 @@ const GATEWAY_ALLOWED_METHODS = new Set([
   'session.destroy',
   'session.list',
   'ping',
+])
+
+// Methods allowed for RPC (request-response pattern)
+const GATEWAY_RPC_ALLOWED_METHODS = new Set([
+  'chat.send',
+  'chat.cancel',
+  'session.create',
+  'session.destroy',
+  'session.list',
+  'ping',
+  // Skills management
+  'skills.status',
+  'skills.update',
+  // Cron management
+  'cron.list',
+  'cron.add',
+  'cron.update',
+  'cron.remove',
+  'cron.run',
 ])
 
 // ── Security: Shortcut accelerator validation ──────────
@@ -241,5 +260,20 @@ export function setupIpcHandlers(): void {
     } catch (err) {
       return { ok: false, error: String(err) }
     }
+  })
+
+  // ── Gateway RPC (Promise-based request-response) ──────
+  ipcMain.handle('gateway:rpc', async (_event, method: string, params?: Record<string, unknown>, timeoutMs?: number) => {
+    if (typeof method !== 'string' || !GATEWAY_RPC_ALLOWED_METHODS.has(method)) {
+      logger.warn(`Blocked gateway RPC method: ${method}`)
+      throw new Error(`Gateway RPC method not allowed: ${method}`)
+    }
+    if (params !== null && params !== undefined && typeof params !== 'object') {
+      throw new Error('Invalid params: must be an object')
+    }
+    if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || timeoutMs < 1000 || timeoutMs > 60000)) {
+      throw new Error('Invalid timeout: must be 1000-60000ms')
+    }
+    return await rpcGateway(method, params || {}, timeoutMs)
   })
 }

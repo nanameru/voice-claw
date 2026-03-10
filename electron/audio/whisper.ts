@@ -34,11 +34,16 @@ async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
 
   const parts: Buffer[] = []
 
+  // Detect audio format from magic bytes
+  const isWav = audioBuffer.length > 4 && audioBuffer.toString('ascii', 0, 4) === 'RIFF'
+  const filename = isWav ? 'recording.wav' : 'recording.webm'
+  const mimeType = isWav ? 'audio/wav' : 'audio/webm'
+
   // file part
   parts.push(Buffer.from(
     `--${boundary}${CRLF}` +
-    `Content-Disposition: form-data; name="file"; filename="recording.webm"${CRLF}` +
-    `Content-Type: audio/webm${CRLF}${CRLF}`,
+    `Content-Disposition: form-data; name="file"; filename="${filename}"${CRLF}` +
+    `Content-Type: ${mimeType}${CRLF}${CRLF}`,
     'utf-8'
   ))
   parts.push(audioBuffer)

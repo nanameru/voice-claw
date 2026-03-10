@@ -1,6 +1,7 @@
 export interface VoiceClawAPI {
   gateway: {
     send: (method: string, params: Record<string, unknown>) => Promise<void>
+    rpc: (method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>
     connect: () => Promise<void>
     disconnect: () => Promise<void>
     getStatus: () => Promise<'connected' | 'connecting' | 'disconnected'>
