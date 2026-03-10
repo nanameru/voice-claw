@@ -27,6 +27,10 @@ export interface VoiceClawAPI {
   audio: {
     transcribe: (audioData: ArrayBuffer) => Promise<string>
   }
+  tts: {
+    speak: (message: string) => Promise<ArrayBuffer>
+    synthesize: (text: string) => Promise<ArrayBuffer>
+  }
   conversations: {
     get: () => Promise<Array<{
       id: string

@@ -6,6 +6,7 @@ import { hideOverlay, getOverlayWindow } from './overlay-window'
 import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
 import { setupAudioHandlers } from '../audio/whisper'
+import { setupTtsHandlers } from '../audio/tts'
 
 // ── Security: Store key allowlist ──────────────────────
 const STORE_ALLOWED_KEYS = new Set([
@@ -13,6 +14,7 @@ const STORE_ALLOWED_KEYS = new Set([
   'onboarded',
   'audio',
   'gateway',
+  'tts',
 ])
 
 // ── Security: Gateway method whitelist ─────────────────
@@ -99,6 +101,11 @@ export function setupIpcHandlers(): void {
       const audio = value as Record<string, unknown>
       return { ...audio, whisperApiKey: getSecureValue('whisperApiKey') }
     }
+    // For tts key, reconstruct with decrypted ttsApiKey
+    if (key === 'tts' && value && typeof value === 'object') {
+      const tts = value as Record<string, unknown>
+      return { ...tts, apiKey: getSecureValue('ttsApiKey') }
+    }
     return value
   })
 
@@ -140,6 +147,21 @@ export function setupIpcHandlers(): void {
       // Store audio config WITHOUT the plaintext API key
       const { whisperApiKey: _key, ...safeAudio } = audio
       store.set('audio' as any, { ...safeAudio, whisperApiKey: '' })
+      return
+    }
+    // Validate and securely store TTS config
+    if (key === 'tts' && value && typeof value === 'object') {
+      const tts = value as Record<string, unknown>
+      const validVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
+      if (tts.voice !== undefined && !validVoices.includes(tts.voice as string)) {
+        throw new Error('Invalid TTS voice')
+      }
+      // Extract and encrypt apiKey separately
+      if (typeof tts.apiKey === 'string') {
+        setSecureValue('ttsApiKey', tts.apiKey)
+      }
+      const { apiKey: _key, ...safeTts } = tts
+      store.set('tts' as any, safeTts)
       return
     }
     store.set(key as any, value)
@@ -185,6 +207,9 @@ export function setupIpcHandlers(): void {
 
   // Audio transcription (Whisper API)
   setupAudioHandlers()
+
+  // TTS (voice acknowledgment + speech synthesis)
+  setupTtsHandlers()
 
   // Gateway process management
   ipcMain.handle('gateway:process-status', () => {

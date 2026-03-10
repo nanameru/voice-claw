@@ -7,6 +7,8 @@ import { useGatewayStore } from '../../stores/gateway'
 import { useUIStore } from '../../stores/ui'
 import { useConversationStore } from '../../stores/conversation'
 import { useAudioVisualizer } from '../../hooks/useAudioVisualizer'
+import { useTtsStore } from '../../stores/tts'
+import { useSettingsStore } from '../../stores/settings'
 
 type OverlayStatus = 'idle' | 'recording' | 'transcribing' | 'responding'
 
@@ -21,6 +23,12 @@ export function VoiceOverlay() {
   const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('idle')
   const [transcribedText, setTranscribedText] = useState('')
 
+  // Sync TTS enabled state from settings
+  const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
+  useEffect(() => {
+    useTtsStore.getState().setEnabled(settingsTtsEnabled)
+  }, [settingsTtsEnabled])
+
   // MediaRecorder refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -28,6 +36,12 @@ export function VoiceOverlay() {
 
   // Audio visualizer for live volume during recording
   const { volume, start: startVisualizer, stop: stopVisualizer } = useAudioVisualizer()
+
+  // TTS store
+  const ttsEnabled = useTtsStore((s) => s.enabled)
+  const isTtsSpeaking = useTtsStore((s) => s.isSpeaking)
+  const ttsSpeak = useTtsStore((s) => s.speak)
+  const ttsStop = useTtsStore((s) => s.stop)
 
   // Track the last sent message for conversation history
   const lastSentMessageRef = useRef('')
@@ -50,10 +64,18 @@ export function VoiceOverlay() {
       deliver: false,
       idempotencyKey: crypto.randomUUID(),
     })
-  }, [textInput, status, clearResponse, setStreaming])
+
+    // Fire voice acknowledgment in parallel (non-blocking)
+    if (ttsEnabled) {
+      ttsSpeak(msg).catch((err) => console.error('TTS error:', err))
+    }
+  }, [textInput, status, clearResponse, setStreaming, ttsEnabled, ttsSpeak])
 
   // Start recording audio via MediaRecorder
   const startRecording = useCallback(async () => {
+    // Stop any TTS playback before recording
+    ttsStop()
+
     try {
       // Request mic permission if needed
       const permission = await window.voiceClaw.mic.checkPermission()
@@ -121,7 +143,7 @@ export function VoiceOverlay() {
       console.error('Recording start error:', err)
       setOverlayStatus('idle')
     }
-  }, [sendMessage, setListening, setTranscript, startVisualizer])
+  }, [sendMessage, setListening, setTranscript, startVisualizer, ttsStop])
 
   // Stop recording
   const stopRecording = useCallback(() => {
@@ -249,6 +271,8 @@ export function VoiceOverlay() {
   // Determine volume for Aura orb
   const auraVolume = overlayStatus === 'recording'
     ? volume
+    : isTtsSpeaking
+    ? 0.6
     : isStreaming
     ? 0.5
     : 0
