@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { AuraVisualizer } from './AuraVisualizer'
 import { ResponsePanel } from './ResponsePanel'
+import { ActivityPanel } from './ActivityPanel'
 import { useVoiceStore } from '../../stores/voice'
 import { useGatewayStore } from '../../stores/gateway'
 import { useUIStore } from '../../stores/ui'
@@ -9,6 +10,7 @@ import { useConversationStore } from '../../stores/conversation'
 import { useAudioVisualizer } from '../../hooks/useAudioVisualizer'
 import { useTtsStore } from '../../stores/tts'
 import { useSettingsStore } from '../../stores/settings'
+import { useActivityStore } from '../../stores/activity'
 
 type OverlayStatus = 'idle' | 'recording' | 'transcribing' | 'responding'
 
@@ -43,6 +45,9 @@ export function VoiceOverlay() {
   const ttsSpeak = useTtsStore((s) => s.speak)
   const ttsStop = useTtsStore((s) => s.stop)
 
+  // Activity tracking
+  const activity = useActivityStore()
+
   // Track the last sent message for conversation history
   const lastSentMessageRef = useRef('')
 
@@ -58,6 +63,13 @@ export function VoiceOverlay() {
     setTextInput('')
     lastSentMessageRef.current = msg
 
+    // Start activity if not already started (text input case)
+    if (!activity.currentEntryId) {
+      activity.startActivity()
+      activity.setUserInput(msg)
+    }
+    activity.addStep('sending')
+
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,
       message: msg,
@@ -65,11 +77,15 @@ export function VoiceOverlay() {
       idempotencyKey: crypto.randomUUID(),
     })
 
+    activity.completeStep('sending')
+    activity.addStep('responding')
+
     // Fire voice acknowledgment in parallel (non-blocking)
     if (ttsEnabled) {
+      activity.addStep('tts')
       ttsSpeak(msg).catch((err) => console.error('TTS error:', err))
     }
-  }, [textInput, status, clearResponse, setStreaming, ttsEnabled, ttsSpeak])
+  }, [textInput, status, clearResponse, setStreaming, ttsEnabled, ttsSpeak, activity])
 
   // Start recording audio via MediaRecorder
   const startRecording = useCallback(async () => {
@@ -111,27 +127,35 @@ export function VoiceOverlay() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         audioChunksRef.current = []
 
+        activity.completeStep('recording')
+
         if (audioBlob.size === 0) {
           setOverlayStatus('idle')
+          activity.failActivity('Empty recording')
           return
         }
 
         // Transcribe via Whisper
         setOverlayStatus('transcribing')
+        activity.addStep('transcribing', `${(audioBlob.size / 1024).toFixed(0)}KB`)
         try {
           const arrayBuffer = await audioBlob.arrayBuffer()
           const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
+          activity.completeStep('transcribing')
           if (text && text.trim()) {
             setTranscribedText(text.trim())
             setTranscript(text.trim())
+            activity.setTranscribedText(text.trim())
             // Auto-send to gateway
             await sendMessage(text.trim())
           } else {
             setOverlayStatus('idle')
+            activity.failActivity('No speech detected')
           }
         } catch (err) {
           console.error('Transcription error:', err)
           setOverlayStatus('idle')
+          activity.failActivity(`Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`)
         }
       }
 
@@ -139,6 +163,8 @@ export function VoiceOverlay() {
       setOverlayStatus('recording')
       setListening(true)
       startVisualizer()
+      activity.startActivity()
+      activity.addStep('recording')
     } catch (err) {
       console.error('Recording start error:', err)
       setOverlayStatus('idle')
@@ -197,17 +223,26 @@ export function VoiceOverlay() {
             setStreaming(false)
             setOverlayStatus('idle')
             setTranscribedText('')
+            const response = useGatewayStore.getState().streamingResponse
             addConversation({
               id: crypto.randomUUID(),
               timestamp: Date.now(),
               transcript: lastSentMessageRef.current,
-              response: useGatewayStore.getState().streamingResponse,
+              response,
             })
+            const act = useActivityStore.getState()
+            act.completeStep('responding')
+            act.setAiResponse(response)
+            act.addStep('done')
+            act.completeStep('done')
+            act.completeActivity()
           }
 
           if (phase === 'error') {
             setStreaming(false)
             setOverlayStatus('idle')
+            const act = useActivityStore.getState()
+            act.failActivity('AI response error')
           }
         }
       }
@@ -428,6 +463,8 @@ export function VoiceOverlay() {
         </div>
 
         <ResponsePanel />
+
+        <ActivityPanel />
       </div>
 
       {/* Footer hint */}
