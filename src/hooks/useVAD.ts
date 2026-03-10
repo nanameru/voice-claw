@@ -115,8 +115,10 @@ export function useVAD(options: UseVADOptions) {
       mediaStreamRef.current = stream
 
       const vad = await MicVAD.new({
-        // Serve VAD worklet + model from local public/ directory
-        baseAssetPath: '/vad/',
+        // Use explicit paths for worklet and model (copied by vite-plugin-static-copy)
+        workletURL: '/vad.worklet.bundle.min.js',
+        modelURL: '/silero_vad_legacy.onnx',
+        onnxWASMBasePath: '/',
         stream, // Share the same microphone stream
 
         positiveSpeechThreshold: 0.5,
