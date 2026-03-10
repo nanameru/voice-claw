@@ -1,7 +1,6 @@
 "use strict";
 const { contextBridge, ipcRenderer } = require("electron");
 
-// ── Security: IPC channel allowlists ──────────────────
 const INVOKE_ALLOWED = new Set([
   "gateway:send",
   "gateway:connect",
@@ -17,6 +16,9 @@ const INVOKE_ALLOWED = new Set([
   "store:set",
   "mic:check-permission",
   "mic:request-permission",
+  "audio:transcribe",
+  "tts:speak",
+  "tts:synthesize",
   "conversations:get",
   "conversations:add",
   "conversations:clear",
@@ -33,17 +35,19 @@ const ON_ALLOWED = new Set([
 
 function safeInvoke(channel, ...args) {
   if (!INVOKE_ALLOWED.has(channel)) {
-    throw new Error(`IPC invoke channel not allowed: ${channel}`);
+    throw new Error("IPC invoke channel not allowed: " + channel);
   }
   return ipcRenderer.invoke(channel, ...args);
 }
 
 function safeOn(channel, handler) {
   if (!ON_ALLOWED.has(channel)) {
-    throw new Error(`IPC on channel not allowed: ${channel}`);
+    throw new Error("IPC on channel not allowed: " + channel);
   }
   ipcRenderer.on(channel, handler);
-  return () => ipcRenderer.removeListener(channel, handler);
+  return function () {
+    ipcRenderer.removeListener(channel, handler);
+  };
 }
 
 const api = {
@@ -86,6 +90,13 @@ const api = {
   mic: {
     checkPermission: () => safeInvoke("mic:check-permission"),
     requestPermission: () => safeInvoke("mic:request-permission"),
+  },
+  audio: {
+    transcribe: (audioData) => safeInvoke("audio:transcribe", audioData),
+  },
+  tts: {
+    speak: (message) => safeInvoke("tts:speak", message),
+    synthesize: (text) => safeInvoke("tts:synthesize", text),
   },
   conversations: {
     get: () => safeInvoke("conversations:get"),

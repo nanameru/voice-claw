@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-electron
+!dist-electron/preload/
+!dist-electron/preload/index.cjs
 release
 *.log
 .DS_Store
