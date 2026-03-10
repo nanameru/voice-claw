@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, systemPreferences } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { createOverlayWindow, showOverlay } from './overlay-window'
@@ -37,6 +37,16 @@ let mainWindow: BrowserWindow | null = null
 
 app.whenReady().then(async () => {
   logger.info('VoiceClaw starting...')
+
+  // Request microphone permission on macOS before anything else
+  if (process.platform === 'darwin') {
+    const micStatus = systemPreferences.getMediaAccessStatus('microphone')
+    logger.info(`Microphone permission status: ${micStatus}`)
+    if (micStatus !== 'granted') {
+      const granted = await systemPreferences.askForMediaAccess('microphone')
+      logger.info(`Microphone permission ${granted ? 'granted' : 'denied'}`)
+    }
+  }
 
   // Setup IPC handlers before creating window
   setupIpcHandlers()

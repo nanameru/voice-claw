@@ -50,6 +50,20 @@ export function useVAD(options: UseVADOptions) {
   const start = useCallback(async () => {
     if (vadRef.current) return
 
+    // Check and request microphone permission before starting VAD
+    try {
+      const micStatus = await window.voiceClaw.mic.checkPermission()
+      if (micStatus !== 'granted') {
+        const granted = await window.voiceClaw.mic.requestPermission()
+        if (!granted) {
+          console.error('Microphone permission denied')
+          return
+        }
+      }
+    } catch (err) {
+      console.error('Microphone permission check failed:', err)
+    }
+
     try {
       const vad = await MicVAD.new({
         // Use CDN for VAD model assets (worklet + ONNX model + WASM)
