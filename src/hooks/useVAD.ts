@@ -66,9 +66,9 @@ export function useVAD(options: UseVADOptions) {
 
     try {
       const vad = await MicVAD.new({
-        // Use CDN for VAD model assets (worklet + ONNX model + WASM)
-        baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/dist/',
-        onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/',
+        // Serve VAD model and ONNX WASM from local public/ directory
+        baseAssetPath: '/vad/',
+        onnxWASMBasePath: '/onnx/',
 
         positiveSpeechThreshold: 0.5,
         negativeSpeechThreshold: 0.35,
