@@ -32,7 +32,7 @@ function copyOnnxWasm() {
 }
 
 export default defineConfig({
-  assetsInclude: ['**/*.onnx', '**/*.wasm'],
+  assetsInclude: ['**/*.onnx'],
   plugins: [
     copyOnnxWasm(),
     react(),
