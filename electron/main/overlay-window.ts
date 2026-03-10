@@ -25,6 +25,7 @@ export function createOverlayWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: true,
+    backgroundColor: '#00000000',
     vibrancy: 'under-window',
     visualEffectState: 'active',
     webPreferences: {

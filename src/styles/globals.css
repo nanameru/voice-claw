@@ -7,6 +7,14 @@
     box-sizing: border-box;
   }
 
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+  }
+
   ::-webkit-scrollbar {
     width: 4px;
   }
