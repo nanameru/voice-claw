@@ -1,10 +1,5 @@
 import { useRef, useCallback, useState } from 'react'
-import { MicVAD } from '@ricky0123/vad-web'
-import * as ort from 'onnxruntime-web'
-
-// Configure ONNX Runtime WASM paths to load from public/onnx/
-ort.env.wasm.wasmPaths = '/onnx/'
-ort.env.wasm.numThreads = 1
+import { MicVAD, utils } from '@ricky0123/vad-web'
 
 /** Convert Float32Array (16kHz) to WAV Blob for Whisper API */
 function float32ToWav(samples: Float32Array, sampleRate = 16000): Blob {
@@ -71,8 +66,9 @@ export function useVAD(options: UseVADOptions) {
 
     try {
       const vad = await MicVAD.new({
-        // Serve VAD worklet from local public/ directory
+        // Serve VAD worklet + model from local public/ directory
         baseAssetPath: '/vad/',
+        onnxWASMBasePath: '/onnx/',
 
         positiveSpeechThreshold: 0.5,
         negativeSpeechThreshold: 0.35,
