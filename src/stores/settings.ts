@@ -9,6 +9,9 @@ interface SettingsState {
   sttProvider: 'openai' | 'groq'
   whisperApiKey: string
   onboarded: boolean
+  ttsEnabled: boolean
+  ttsVoice: string
+  ttsApiKey: string
 
   loadSettings: () => Promise<void>
   updateGateway: (host: string, port: number) => Promise<void>
@@ -17,6 +20,9 @@ interface SettingsState {
   updateAudioEngine: (engine: 'webspeech' | 'whisper') => Promise<void>
   updateWhisperApiKey: (key: string) => Promise<void>
   setOnboarded: (onboarded: boolean) => Promise<void>
+  updateTtsEnabled: (enabled: boolean) => Promise<void>
+  updateTtsVoice: (voice: string) => Promise<void>
+  updateTtsApiKey: (key: string) => Promise<void>
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
@@ -28,6 +34,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   sttProvider: 'groq',
   whisperApiKey: '',
   onboarded: false,
+  ttsEnabled: false,
+  ttsVoice: 'nova',
+  ttsApiKey: '',
 
   loadSettings: async () => {
     const gateway = (await window.voiceClaw.store.get('gateway')) as { host: string; port: number }
@@ -40,6 +49,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     }
     const onboarded = (await window.voiceClaw.store.get('onboarded')) as boolean
 
+    const tts = (await window.voiceClaw.store.get('tts')) as {
+      enabled: boolean
+      voice: string
+      provider: 'openai'
+      apiKey: string
+    }
+
     set({
       gatewayHost: gateway.host,
       gatewayPort: gateway.port,
@@ -49,6 +65,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       sttProvider: audio.sttProvider || 'groq',
       whisperApiKey: audio.whisperApiKey,
       onboarded,
+      ttsEnabled: tts?.enabled ?? false,
+      ttsVoice: tts?.voice ?? 'nova',
+      ttsApiKey: tts?.apiKey ?? '',
     })
   },
 
@@ -84,5 +103,23 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setOnboarded: async (onboarded) => {
     await window.voiceClaw.store.set('onboarded', onboarded)
     set({ onboarded })
+  },
+
+  updateTtsEnabled: async (enabled) => {
+    const tts = (await window.voiceClaw.store.get('tts')) as Record<string, unknown>
+    await window.voiceClaw.store.set('tts', { ...tts, enabled })
+    set({ ttsEnabled: enabled })
+  },
+
+  updateTtsVoice: async (voice) => {
+    const tts = (await window.voiceClaw.store.get('tts')) as Record<string, unknown>
+    await window.voiceClaw.store.set('tts', { ...tts, voice })
+    set({ ttsVoice: voice })
+  },
+
+  updateTtsApiKey: async (key) => {
+    const tts = (await window.voiceClaw.store.get('tts')) as Record<string, unknown>
+    await window.voiceClaw.store.set('tts', { ...tts, apiKey: key })
+    set({ ttsApiKey: key })
   },
 }))

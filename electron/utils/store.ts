@@ -14,6 +14,11 @@ interface StoreSchema {
     sttProvider: 'openai' | 'groq'
     whisperApiKey: string  // stored encrypted via safeStorage
   }
+  tts: {
+    enabled: boolean
+    voice: string
+    provider: 'openai'
+  }
   onboarded: boolean
   conversations: Array<{
     id: string
@@ -35,6 +40,11 @@ const store = new Store<StoreSchema>({
       engine: 'whisper',
       sttProvider: 'groq',
       whisperApiKey: '',
+    },
+    tts: {
+      enabled: false,
+      voice: 'nova',
+      provider: 'openai',
     },
     onboarded: false,
     conversations: [],

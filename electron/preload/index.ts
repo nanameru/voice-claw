@@ -17,6 +17,8 @@ const INVOKE_ALLOWED = new Set([
   'mic:check-permission',
   'mic:request-permission',
   'audio:transcribe',
+  'tts:speak',
+  'tts:synthesize',
   'conversations:get',
   'conversations:add',
   'conversations:clear',
@@ -101,6 +103,12 @@ const api = {
   // Audio transcription
   audio: {
     transcribe: (audioData: ArrayBuffer) => safeInvoke('audio:transcribe', audioData),
+  },
+
+  // TTS (voice acknowledgment + speech synthesis)
+  tts: {
+    speak: (message: string) => safeInvoke('tts:speak', message),
+    synthesize: (text: string) => safeInvoke('tts:synthesize', text),
   },
 
   // Conversations

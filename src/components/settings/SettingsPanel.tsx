@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useSettingsStore } from '../../stores/settings'
 import { useUIStore } from '../../stores/ui'
 import { useGatewayStore } from '../../stores/gateway'
+import { useTtsStore } from '../../stores/tts'
 
 export function SettingsPanel() {
   const settings = useSettingsStore()
@@ -17,6 +18,10 @@ export function SettingsPanel() {
   const [whisperKey, setWhisperKey] = useState(settings.whisperApiKey)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDevice, setSelectedDevice] = useState(settings.audioDeviceId || '')
+  const [ttsEnabled, setTtsEnabled] = useState(settings.ttsEnabled)
+  const [ttsVoice, setTtsVoice] = useState(settings.ttsVoice || 'nova')
+  const [ttsApiKey, setTtsApiKey] = useState(settings.ttsApiKey || '')
+  const [ttsUseSameKey, setTtsUseSameKey] = useState(!settings.ttsApiKey)
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((allDevices) => {
@@ -50,6 +55,16 @@ export function SettingsPanel() {
     if (whisperKey) {
       await settings.updateWhisperApiKey(whisperKey)
     }
+  }
+
+  const handleSaveTts = async () => {
+    await settings.updateTtsEnabled(ttsEnabled)
+    await settings.updateTtsVoice(ttsVoice)
+    const keyToSave = ttsUseSameKey ? whisperKey : ttsApiKey
+    await settings.updateTtsApiKey(keyToSave)
+    // Sync to TTS store
+    useTtsStore.getState().setEnabled(ttsEnabled)
+    useTtsStore.getState().setVoice(ttsVoice)
   }
 
   const inputClass =
@@ -170,6 +185,70 @@ export function SettingsPanel() {
             className="text-xs px-3 py-1.5 bg-claw-accent/20 hover:bg-claw-accent/30 text-claw-accent rounded transition-colors"
           >
             Save Audio Settings
+          </button>
+        </div>
+
+        {/* TTS (Voice Response) */}
+        <div className={sectionClass}>
+          <label className={labelClass}>Voice Response (TTS)</label>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={ttsEnabled}
+              onChange={(e) => setTtsEnabled(e.target.checked)}
+              className="accent-claw-accent"
+            />
+            <span className="text-sm text-claw-text">Enable voice response</span>
+          </label>
+
+          {ttsEnabled && (
+            <>
+              <label className={labelClass}>Voice</label>
+              <select
+                className={inputClass}
+                value={ttsVoice}
+                onChange={(e) => setTtsVoice(e.target.value)}
+              >
+                <option value="nova">Nova (Female, warm)</option>
+                <option value="alloy">Alloy (Neutral)</option>
+                <option value="echo">Echo (Male)</option>
+                <option value="fable">Fable (British)</option>
+                <option value="onyx">Onyx (Male, deep)</option>
+                <option value="shimmer">Shimmer (Female, soft)</option>
+              </select>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ttsUseSameKey}
+                  onChange={(e) => setTtsUseSameKey(e.target.checked)}
+                  className="accent-claw-accent"
+                />
+                <span className="text-sm text-claw-text">Use same API key as STT</span>
+              </label>
+
+              {!ttsUseSameKey && (
+                <input
+                  className={inputClass}
+                  type="password"
+                  value={ttsApiKey}
+                  onChange={(e) => setTtsApiKey(e.target.value)}
+                  placeholder="OpenAI API Key for TTS"
+                />
+              )}
+
+              <p className="text-[10px] text-claw-text-dim">
+                Requires OpenAI API key. Uses gpt-4o-mini for acknowledgment + tts-1 for speech.
+              </p>
+            </>
+          )}
+
+          <button
+            onClick={handleSaveTts}
+            className="text-xs px-3 py-1.5 bg-claw-accent/20 hover:bg-claw-accent/30 text-claw-accent rounded transition-colors"
+          >
+            Save TTS Settings
           </button>
         </div>
       </div>
