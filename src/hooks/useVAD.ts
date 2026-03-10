@@ -1,5 +1,5 @@
 import { useRef, useCallback, useState } from 'react'
-import { MicVAD, utils } from '@ricky0123/vad-web'
+import { MicVAD } from '@ricky0123/vad-web'
 
 /** Convert Float32Array (16kHz) to WAV Blob for Whisper API */
 function float32ToWav(samples: Float32Array, sampleRate = 16000): Blob {
@@ -68,7 +68,6 @@ export function useVAD(options: UseVADOptions) {
       const vad = await MicVAD.new({
         // Serve VAD worklet + model from local public/ directory
         baseAssetPath: '/vad/',
-        onnxWASMBasePath: '/onnx/',
 
         positiveSpeechThreshold: 0.5,
         negativeSpeechThreshold: 0.35,
