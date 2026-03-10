@@ -40,13 +40,11 @@ export function VoiceOverlay() {
   const { volume, start: startVisualizer, stop: stopVisualizer } = useAudioVisualizer()
 
   // TTS store
-  const ttsEnabled = useTtsStore((s) => s.enabled)
   const isTtsSpeaking = useTtsStore((s) => s.isSpeaking)
-  const ttsSpeak = useTtsStore((s) => s.speak)
   const ttsStop = useTtsStore((s) => s.stop)
 
-  // Activity tracking
-  const activity = useActivityStore()
+  // Activity tracking - use getState() to avoid re-render loops
+  const activity = useActivityStore
 
   // Track the last sent message for conversation history
   const lastSentMessageRef = useRef('')
@@ -64,11 +62,11 @@ export function VoiceOverlay() {
     lastSentMessageRef.current = msg
 
     // Start activity if not already started (text input case)
-    if (!activity.currentEntryId) {
-      activity.startActivity()
-      activity.setUserInput(msg)
+    if (!activity.getState().currentEntryId) {
+      activity.getState().startActivity()
+      activity.getState().setUserInput(msg)
     }
-    activity.addStep('sending')
+    activity.getState().addStep('sending')
 
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,
@@ -77,15 +75,10 @@ export function VoiceOverlay() {
       idempotencyKey: crypto.randomUUID(),
     })
 
-    activity.completeStep('sending')
-    activity.addStep('responding')
+    activity.getState().completeStep('sending')
+    activity.getState().addStep('responding')
 
-    // Fire voice acknowledgment in parallel (non-blocking)
-    if (ttsEnabled) {
-      activity.addStep('tts')
-      ttsSpeak(msg).catch((err) => console.error('TTS error:', err))
-    }
-  }, [textInput, status, clearResponse, setStreaming, ttsEnabled, ttsSpeak, activity])
+  }, [textInput, status, clearResponse, setStreaming])
 
   // Start recording audio via MediaRecorder
   const startRecording = useCallback(async () => {
@@ -127,35 +120,35 @@ export function VoiceOverlay() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         audioChunksRef.current = []
 
-        activity.completeStep('recording')
+        activity.getState().completeStep('recording')
 
         if (audioBlob.size === 0) {
           setOverlayStatus('idle')
-          activity.failActivity('Empty recording')
+          activity.getState().failActivity('Empty recording')
           return
         }
 
         // Transcribe via Whisper
         setOverlayStatus('transcribing')
-        activity.addStep('transcribing', `${(audioBlob.size / 1024).toFixed(0)}KB`)
+        activity.getState().addStep('transcribing', `${(audioBlob.size / 1024).toFixed(0)}KB`)
         try {
           const arrayBuffer = await audioBlob.arrayBuffer()
           const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
-          activity.completeStep('transcribing')
+          activity.getState().completeStep('transcribing')
           if (text && text.trim()) {
             setTranscribedText(text.trim())
             setTranscript(text.trim())
-            activity.setTranscribedText(text.trim())
+            activity.getState().setTranscribedText(text.trim())
             // Auto-send to gateway
             await sendMessage(text.trim())
           } else {
             setOverlayStatus('idle')
-            activity.failActivity('No speech detected')
+            activity.getState().failActivity('No speech detected')
           }
         } catch (err) {
           console.error('Transcription error:', err)
           setOverlayStatus('idle')
-          activity.failActivity(`Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`)
+          activity.getState().failActivity(`Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`)
         }
       }
 
@@ -163,8 +156,8 @@ export function VoiceOverlay() {
       setOverlayStatus('recording')
       setListening(true)
       startVisualizer()
-      activity.startActivity()
-      activity.addStep('recording')
+      activity.getState().startActivity()
+      activity.getState().addStep('recording')
     } catch (err) {
       console.error('Recording start error:', err)
       setOverlayStatus('idle')
@@ -233,9 +226,26 @@ export function VoiceOverlay() {
             const act = useActivityStore.getState()
             act.completeStep('responding')
             act.setAiResponse(response)
-            act.addStep('done')
-            act.completeStep('done')
-            act.completeActivity()
+
+            // Speak AI response via TTS (direct synthesis, no LLM)
+            const tts = useTtsStore.getState()
+            if (tts.enabled && response) {
+              act.addStep('tts')
+              tts.speakDirect(response).then(() => {
+                act.completeStep('tts')
+                act.addStep('done')
+                act.completeStep('done')
+                act.completeActivity()
+              }).catch(() => {
+                act.addStep('done')
+                act.completeStep('done')
+                act.completeActivity()
+              })
+            } else {
+              act.addStep('done')
+              act.completeStep('done')
+              act.completeActivity()
+            }
           }
 
           if (phase === 'error') {

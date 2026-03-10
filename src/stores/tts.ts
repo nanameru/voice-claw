@@ -6,6 +6,7 @@ interface TtsState {
   voice: string
 
   speak: (message: string) => Promise<void>
+  speakDirect: (text: string) => Promise<void>
   stop: () => void
   setEnabled: (enabled: boolean) => void
   setVoice: (voice: string) => void
@@ -55,6 +56,44 @@ export const useTtsStore = create<TtsState>((set) => ({
       await audio.play()
     } catch (err) {
       console.error('TTS playback error:', err)
+      set({ isSpeaking: false })
+    }
+  },
+
+  // Directly synthesize and play text (no LLM acknowledgment generation)
+  speakDirect: async (text: string) => {
+    const state = useTtsStore.getState()
+    if (!state.enabled) return
+
+    state.stop()
+    set({ isSpeaking: true })
+
+    try {
+      const audioBuffer = await window.voiceClaw.tts.synthesize(text)
+      const blob = new Blob([audioBuffer], { type: 'audio/mp3' })
+      const url = URL.createObjectURL(blob)
+      currentBlobUrl = url
+
+      const audio = new Audio(url)
+      currentAudio = audio
+
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
+        currentAudio = null
+        currentBlobUrl = null
+        set({ isSpeaking: false })
+      }
+
+      audio.onerror = () => {
+        URL.revokeObjectURL(url)
+        currentAudio = null
+        currentBlobUrl = null
+        set({ isSpeaking: false })
+      }
+
+      await audio.play()
+    } catch (err) {
+      console.error('TTS direct playback error:', err)
       set({ isSpeaking: false })
     }
   },
