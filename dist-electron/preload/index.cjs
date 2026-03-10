@@ -53,6 +53,7 @@ function safeOn(channel, handler) {
 const api = {
   gateway: {
     send: (method, params) => safeInvoke("gateway:send", method, params),
+    rpc: (method, params) => safeInvoke("gateway:send", method, params),
     connect: () => safeInvoke("gateway:connect"),
     disconnect: () => safeInvoke("gateway:disconnect"),
     getStatus: () => safeInvoke("gateway:status"),

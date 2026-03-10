@@ -1,7 +1,8 @@
 node_modules
 dist
-dist-electron
+dist-electron/*
 !dist-electron/preload/
+dist-electron/preload/*
 !dist-electron/preload/index.cjs
 release
 *.log
