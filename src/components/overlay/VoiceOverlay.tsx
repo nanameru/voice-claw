@@ -75,15 +75,35 @@ export function VoiceOverlay() {
 
   // Filter out Whisper hallucinations (common phrases generated from silence/noise)
   const isWhisperHallucination = useCallback((text: string): boolean => {
+    const t = text.trim().replace(/[。！!.…]+$/g, '') // Strip trailing punctuation
+
+    // Too short to be meaningful
+    if (t.length <= 1) return true
+
+    // Known hallucination phrases (partial match - if text contains these)
     const hallucinations = [
-      'ご清聴ありがとうございました',
+      'ご清聴ありがとう',
+      'ご視聴ありがとう',
       'ありがとうございました',
-      'ご視聴ありがとうございました',
       'お疲れ様でした',
+      'お疲れさまでした',
+      'おつかれさまでした',
       'おやすみなさい',
       'では、また',
+      'ではまた',
       'チャンネル登録',
-      'お願いします',
+      'グッドボタン',
+      'いいねボタン',
+      '高評価',
+      'チャンネル',
+      '字幕',
+      'サブタイトル',
+      'ご覧いただき',
+      'ご覧頂き',
+      'お聞きいただき',
+      'お待ちください',
+      'しばらくお待ち',
+      '最後までご覧',
       'Thank you for watching',
       'Thanks for watching',
       'Thank you',
@@ -91,16 +111,13 @@ export function VoiceOverlay() {
       'Goodbye',
       'See you',
       'Subscribe',
-      '字幕',
-      'サブタイトル',
       'subtitles',
       'MBS',
       'NBC',
+      'NHK',
     ]
-    const t = text.trim()
-    // Exact match or very short meaningless text
-    if (t.length <= 1) return true
-    return hallucinations.some((h) => t === h || t === h + '。' || t === h + '！')
+
+    return hallucinations.some((h) => t.includes(h))
   }, [])
 
   // Interim transcription (real-time, display only, don't send to gateway)
