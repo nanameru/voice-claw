@@ -73,6 +73,36 @@ export function VoiceOverlay() {
     activity.getState().addStep('responding')
   }, [textInput, status, clearResponse, setStreaming])
 
+  // Filter out Whisper hallucinations (common phrases generated from silence/noise)
+  const isWhisperHallucination = useCallback((text: string): boolean => {
+    const hallucinations = [
+      'ご清聴ありがとうございました',
+      'ありがとうございました',
+      'ご視聴ありがとうございました',
+      'お疲れ様でした',
+      'おやすみなさい',
+      'では、また',
+      'チャンネル登録',
+      'お願いします',
+      'Thank you for watching',
+      'Thanks for watching',
+      'Thank you',
+      'Bye bye',
+      'Goodbye',
+      'See you',
+      'Subscribe',
+      '字幕',
+      'サブタイトル',
+      'subtitles',
+      'MBS',
+      'NBC',
+    ]
+    const t = text.trim()
+    // Exact match or very short meaningless text
+    if (t.length <= 1) return true
+    return hallucinations.some((h) => t === h || t === h + '。' || t === h + '！')
+  }, [])
+
   // Interim transcription (real-time, display only, don't send to gateway)
   const transcribeInterim = useCallback(async (audioBlob: Blob) => {
     if (interimBusyRef.current) return // Skip if previous interim is still processing
@@ -81,7 +111,7 @@ export function VoiceOverlay() {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer()
       const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
-      if (text && text.trim()) {
+      if (text && text.trim() && !isWhisperHallucination(text)) {
         setInterimText(text.trim())
       }
     } catch (err) {
@@ -90,7 +120,7 @@ export function VoiceOverlay() {
     } finally {
       interimBusyRef.current = false
     }
-  }, [])
+  }, [isWhisperHallucination])
 
   // Transcribe audio blob and send to gateway
   const transcribeAndSend = useCallback(async (audioBlob: Blob) => {
@@ -103,14 +133,14 @@ export function VoiceOverlay() {
       const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
       activity.getState().completeStep('transcribing')
 
-      if (text && text.trim()) {
+      if (text && text.trim() && !isWhisperHallucination(text)) {
         setTranscribedText(text.trim())
         setTranscript(text.trim())
         activity.getState().setTranscribedText(text.trim())
         await sendMessage(text.trim())
       } else {
         setOverlayStatus(vadActive ? 'listening' : 'idle')
-        activity.getState().failActivity('No speech detected')
+        activity.getState().failActivity(isWhisperHallucination(text) ? 'Filtered hallucination' : 'No speech detected')
       }
     } catch (err) {
       console.error('Transcription error:', err)
@@ -119,7 +149,7 @@ export function VoiceOverlay() {
         `Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`
       )
     }
-  }, [sendMessage, setTranscript, vadActive])
+  }, [sendMessage, setTranscript, vadActive, isWhisperHallucination])
 
   // VAD callbacks (memoized to avoid re-creating VAD)
   const vadOptions = useMemo(() => ({
