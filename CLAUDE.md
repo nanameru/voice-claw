@@ -1,6 +1,7 @@
 # VoiceClaw - 開発ドキュメント
 
 ## 🔧 最新の修正履歴
+- 2026-03-20: ClawX風ワンポチセットアップ実装（CLI自動DL + Gateway自動起動 + 5ステップウィザード）
 - 2026-03-20: スクリーンショット機能セキュリティ強化（renderer直接キャプチャ禁止、tmpファイルランダム化、レート制限、TTL自動クリア、権限チェック、ログ漏洩防止）
 - 2026-03-20: OpenClaw CLIインストーラー + Setup IPC ハンドラー追加（cli-installer.ts, setup:* チャネル）
 - 2026-03-20: ボトムバーPTT（Push-to-Talk）UIに変更 + スクリーンショット自動キャプチャ機能追加
@@ -35,6 +36,7 @@
 - `src/App.tsx` - React ルートコンポーネント
 - `src/components/overlay/VoiceOverlay.tsx` - メインオーバーレイUI
 - `src/components/overlay/AuraVisualizer.tsx` - WebGLシェーダーオーラビジュアライザー
+- `src/components/onboarding/OnboardingFlow.tsx` - ClawX風5ステップセットアップウィザード（CLI DL→Gateway起動→マイク許可）
 - `src/components/skills/SkillsPanel.tsx` - Skills管理パネル
 - `src/components/cron/CronPanel.tsx` - Cronスケジュールタスク管理パネル
 - `src/stores/` - Zustand状態管理（voice, gateway, conversation, settings, ui, tts, activity, skills, cron）
