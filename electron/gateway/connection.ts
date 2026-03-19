@@ -278,6 +278,7 @@ export function sendToGateway(method: string, params: Record<string, unknown>): 
     params,
   }
 
+  // Log method only — never log params (may contain screenshots or sensitive data)
   logger.info(`Sending to gateway: ${method} (id: ${message.id})`)
   ws.send(JSON.stringify(message))
 }

@@ -8,6 +8,7 @@ import { setupIpcHandlers } from './ipc-handlers'
 import { connectToGateway, disconnectGateway } from '../gateway/connection'
 import { getGatewayProcessManager } from '../gateway/process'
 import { logger } from '../utils/logger'
+import { cleanupScreenshots } from '../utils/screenshot'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -113,6 +114,7 @@ app.whenReady().then(async () => {
 app.on('will-quit', async () => {
   unregisterShortcut()
   disconnectGateway()
+  cleanupScreenshots() // Security: ensure no temp screenshot files remain
 
   // Stop Gateway if we own the process
   const gatewayManager = getGatewayProcessManager()

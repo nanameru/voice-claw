@@ -172,6 +172,8 @@ export function VoiceOverlay() {
 
         if (audioBlob.size < 1000) {
           setOverlayStatus('idle')
+          clearSnapshots() // Security: clear snapshots on error path
+          setSnapshotCount(0)
           activity.getState().failActivity('No speech detected')
           return
         }
@@ -192,6 +194,8 @@ export function VoiceOverlay() {
             await sendMessage(text.trim())
           } else {
             setOverlayStatus('idle')
+            clearSnapshots() // Security: clear on hallucination/no-speech
+            setSnapshotCount(0)
             activity.getState().failActivity(
               isWhisperHallucination(text) ? 'Filtered hallucination' : 'No speech detected'
             )
@@ -199,6 +203,8 @@ export function VoiceOverlay() {
         } catch (err) {
           console.error('Transcription error:', err)
           setOverlayStatus('idle')
+          clearSnapshots() // Security: clear on transcription failure
+          setSnapshotCount(0)
           activity.getState().failActivity(
             `Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`
           )
@@ -231,9 +237,19 @@ export function VoiceOverlay() {
       if (collectedSnapshots && collectedSnapshots.length > 0) {
         setSnapshots(collectedSnapshots)
         setSnapshotCount(collectedSnapshots.length)
+
+        // Security: TTL safety net — auto-clear snapshots after 30s
+        // in case sendMessage is never reached (gateway disconnect, etc.)
+        setTimeout(() => {
+          const current = useUIStore.getState().snapshots
+          if (current.length > 0) {
+            clearSnapshots()
+            setSnapshotCount(0)
+          }
+        }, 30_000)
       }
     }).catch(() => {})
-  }, [setListening, setPTTActive, setSnapshots])
+  }, [setListening, setPTTActive, setSnapshots, clearSnapshots])
 
   // PTT IPC listeners
   useEffect(() => {

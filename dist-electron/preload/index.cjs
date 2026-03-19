@@ -14,7 +14,7 @@ const INVOKE_ALLOWED = new Set([
   "shortcut:update",
   "overlay:hide",
   "overlay:resize",
-  "screenshot:capture",
+  "screen:check-permission",
   "ptt:stop",
   "store:get",
   "store:set",
@@ -36,7 +36,6 @@ const ON_ALLOWED = new Set([
   "overlay:show",
   "overlay:hide",
   "ptt:start",
-  "ptt:screenshot",
 ]);
 
 function safeInvoke(channel, ...args) {
@@ -88,18 +87,14 @@ const api = {
       return safeOn("overlay:hide", handler);
     },
   },
-  screenshot: {
-    capture: () => safeInvoke("screenshot:capture"),
+  screen: {
+    checkPermission: () => safeInvoke("screen:check-permission"),
   },
   ptt: {
     stop: () => safeInvoke("ptt:stop"),
     onStart: (callback) => {
       const handler = () => callback();
       return safeOn("ptt:start", handler);
-    },
-    onScreenshot: (callback) => {
-      const handler = (_event, base64) => callback(base64);
-      return safeOn("ptt:screenshot", handler);
     },
   },
   shortcut: {
