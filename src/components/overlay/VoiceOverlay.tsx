@@ -8,6 +8,7 @@ import { useConversationStore } from '../../stores/conversation'
 import { useTtsStore } from '../../stores/tts'
 import { useSettingsStore } from '../../stores/settings'
 import { useActivityStore } from '../../stores/activity'
+import type { ScreenSnapshot } from '../../stores/ui'
 import ReactMarkdown from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
 
@@ -16,7 +17,7 @@ type OverlayStatus = 'idle' | 'listening' | 'transcribing' | 'responding'
 export function VoiceOverlay() {
   const { setTranscript, setListening } = useVoiceStore()
   const { status, clearResponse, setStreaming, appendResponse, isStreaming, streamingResponse } = useGatewayStore()
-  const { setView, setPTTActive, setScreenshot, screenshotBase64 } = useUIStore()
+  const { setView, setPTTActive, setSnapshots, clearSnapshots, snapshots } = useUIStore()
   const { addConversation } = useConversationStore()
   const sessionKeyRef = useRef(`agent:main:${crypto.randomUUID()}`)
   const [textInput, setTextInput] = useState('')
@@ -27,6 +28,7 @@ export function VoiceOverlay() {
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [snapshotCount, setSnapshotCount] = useState(0)
 
   // Sync TTS enabled state from settings
   const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
@@ -70,7 +72,38 @@ export function VoiceOverlay() {
     return hallucinations.some((h) => t.includes(h))
   }, [])
 
-  // Send message to gateway with optional screenshot
+  /**
+   * Build screen context description from snapshots.
+   * Includes cursor positions over time to show what the user was looking at.
+   */
+  const buildScreenContext = useCallback((snaps: ScreenSnapshot[]): {
+    description: string
+    screenshots: Array<{ base64: string; cursor: { x: number; y: number }; timestamp: number }>
+  } | null => {
+    if (!snaps || snaps.length === 0) return null
+
+    const cursorPath = snaps.map((s, i) => {
+      const elapsed = i === 0 ? 0 : ((s.timestamp - snaps[0].timestamp) / 1000).toFixed(1)
+      return `  ${elapsed}s: cursor at (${s.cursor.x}, ${s.cursor.y})`
+    }).join('\n')
+
+    const description = [
+      `[Screen context: ${snaps.length} screenshot(s) captured during speech]`,
+      `[Cursor movement during recording:]`,
+      cursorPath,
+    ].join('\n')
+
+    return {
+      description,
+      screenshots: snaps.map((s) => ({
+        base64: s.base64,
+        cursor: s.cursor,
+        timestamp: s.timestamp,
+      })),
+    }
+  }, [])
+
+  // Send message to gateway with snapshots
   const sendMessage = useCallback(async (message?: string) => {
     const msg = (message || textInput).trim()
     if (!msg) return
@@ -89,11 +122,12 @@ export function VoiceOverlay() {
     }
     activity.getState().addStep('sending')
 
-    // Build message with screenshot context if available
-    const currentScreenshot = useUIStore.getState().screenshotBase64
+    // Build message with screen context
+    const currentSnapshots = useUIStore.getState().snapshots
+    const screenCtx = buildScreenContext(currentSnapshots)
     let fullMessage = msg
-    if (currentScreenshot) {
-      fullMessage = `[Screenshot attached (base64 PNG, ${(currentScreenshot.length / 1024).toFixed(0)}KB)]\n\n${msg}`
+    if (screenCtx) {
+      fullMessage = `${screenCtx.description}\n\n${msg}`
     }
 
     await window.voiceClaw.gateway.send('chat.send', {
@@ -101,15 +135,16 @@ export function VoiceOverlay() {
       message: fullMessage,
       deliver: false,
       idempotencyKey: crypto.randomUUID(),
-      ...(currentScreenshot ? { screenshot: currentScreenshot } : {}),
+      ...(screenCtx ? { screenshots: screenCtx.screenshots } : {}),
     })
 
-    // Clear screenshot after sending
-    setScreenshot(null)
+    // Clear snapshots after sending
+    clearSnapshots()
+    setSnapshotCount(0)
 
     activity.getState().completeStep('sending')
     activity.getState().addStep('responding')
-  }, [textInput, status, clearResponse, setStreaming, setScreenshot])
+  }, [textInput, status, clearResponse, setStreaming, clearSnapshots, buildScreenContext])
 
   // Start recording (PTT)
   const startRecording = useCallback(async () => {
@@ -136,7 +171,6 @@ export function VoiceOverlay() {
         audioChunksRef.current = []
 
         if (audioBlob.size < 1000) {
-          // Too small, likely no speech
           setOverlayStatus('idle')
           activity.getState().failActivity('No speech detected')
           return
@@ -171,7 +205,7 @@ export function VoiceOverlay() {
         }
       }
 
-      mediaRecorder.start(100) // Collect data every 100ms
+      mediaRecorder.start(100)
       setOverlayStatus('listening')
       setListening(true)
       activity.getState().startActivity()
@@ -182,7 +216,7 @@ export function VoiceOverlay() {
     }
   }, [setListening, setTranscript, sendMessage, isWhisperHallucination])
 
-  // Stop recording (PTT release)
+  // Stop recording (PTT release) — also collects all snapshots from main process
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop()
@@ -191,27 +225,29 @@ export function VoiceOverlay() {
       activity.getState().completeStep('recording')
     }
     setPTTActive(false)
-    window.voiceClaw.ptt.stop().catch(() => {})
-  }, [setListening, setPTTActive])
+
+    // ptt:stop returns all snapshots collected during recording
+    window.voiceClaw.ptt.stop().then((collectedSnapshots) => {
+      if (collectedSnapshots && collectedSnapshots.length > 0) {
+        setSnapshots(collectedSnapshots)
+        setSnapshotCount(collectedSnapshots.length)
+      }
+    }).catch(() => {})
+  }, [setListening, setPTTActive, setSnapshots])
 
   // PTT IPC listeners
   useEffect(() => {
     const unsubStart = window.voiceClaw.ptt.onStart(() => {
-      // Stop TTS if speaking
       useTtsStore.getState().stop()
       setPTTActive(true)
+      setSnapshotCount(0)
       startRecording()
-    })
-
-    const unsubScreenshot = window.voiceClaw.ptt.onScreenshot((base64: string) => {
-      setScreenshot(base64)
     })
 
     return () => {
       unsubStart()
-      unsubScreenshot()
     }
-  }, [startRecording, setPTTActive, setScreenshot])
+  }, [startRecording, setPTTActive])
 
   // keyup listener for PTT stop (Space or Alt release)
   useEffect(() => {
@@ -278,7 +314,6 @@ export function VoiceOverlay() {
             act.completeStep('responding')
             act.setAiResponse(response)
 
-            // Speak AI response via TTS
             const tts = useTtsStore.getState()
             if (tts.enabled && response) {
               act.addStep('tts')
@@ -418,7 +453,7 @@ export function VoiceOverlay() {
         )}
       </AnimatePresence>
 
-      {/* Bottom bar: [status] [aura] [transcript/input] [nav buttons] [close] */}
+      {/* Bottom bar */}
       <div className="h-16 min-h-[64px] flex items-center gap-3 px-4">
         {/* Status dot */}
         <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusColor}`} />
@@ -432,7 +467,6 @@ export function VoiceOverlay() {
         <div className="flex-1 min-w-0">
           {overlayStatus === 'listening' ? (
             <div className="flex items-center gap-2">
-              {/* Waveform bars */}
               <div className="flex items-center gap-0.5 h-5">
                 {[1, 2, 3, 4, 5].map((i) => (
                   <motion.div
@@ -444,12 +478,15 @@ export function VoiceOverlay() {
                 ))}
               </div>
               <span className="text-xs text-emerald-400 font-medium truncate">{statusLabel}</span>
-              {screenshotBase64 && (
-                <span className="text-[10px] text-claw-text-dim">+screenshot</span>
-              )}
+              <span className="text-[10px] text-claw-text-dim">capturing screen</span>
             </div>
           ) : transcribedText && overlayStatus === 'transcribing' ? (
-            <span className="text-xs text-yellow-300 truncate block">{transcribedText}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-yellow-300 truncate">{transcribedText}</span>
+              {snapshotCount > 0 && (
+                <span className="text-[10px] text-claw-text-dim shrink-0">{snapshotCount} screenshots</span>
+              )}
+            </div>
           ) : overlayStatus === 'responding' ? (
             <span className="text-xs text-claw-accent truncate block">{statusLabel}</span>
           ) : (
@@ -471,7 +508,7 @@ export function VoiceOverlay() {
           )}
         </div>
 
-        {/* Send button (only when text input has content) */}
+        {/* Send button */}
         {textInput.trim() && overlayStatus === 'idle' && (
           <button
             onClick={() => sendMessage(textInput)}

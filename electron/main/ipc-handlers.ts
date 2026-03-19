@@ -7,7 +7,7 @@ import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
 import { setupAudioHandlers } from '../audio/whisper'
 import { setupTtsHandlers } from '../audio/tts'
-import { captureScreen } from '../utils/screenshot'
+import { captureScreenWithCursor, stopPeriodicCapture } from '../utils/screenshot'
 
 // ── Security: Store key allowlist ──────────────────────
 const STORE_ALLOWED_KEYS = new Set([
@@ -293,7 +293,7 @@ export function setupIpcHandlers(): void {
 
   // ── Screenshot capture ─────────────────────────────────
   ipcMain.handle('screenshot:capture', async () => {
-    return await captureScreen()
+    return await captureScreenWithCursor()
   })
 
   // ── Overlay resize ─────────────────────────────────────
@@ -307,5 +307,7 @@ export function setupIpcHandlers(): void {
   // ── PTT stop (from renderer) ───────────────────────────
   ipcMain.handle('ptt:stop', () => {
     stopPTT()
+    // Stop periodic capture and return all snapshots
+    return stopPeriodicCapture()
   })
 }

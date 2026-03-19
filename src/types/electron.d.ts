@@ -1,3 +1,9 @@
+export interface ScreenSnapshot {
+  base64: string
+  cursor: { x: number; y: number }
+  timestamp: number
+}
+
 export interface VoiceClawAPI {
   gateway: {
     send: (method: string, params: Record<string, unknown>) => Promise<void>
@@ -16,10 +22,11 @@ export interface VoiceClawAPI {
     onHide: (callback: () => void) => () => void
   }
   screenshot: {
-    capture: () => Promise<string>
+    capture: () => Promise<ScreenSnapshot>
   }
   ptt: {
-    stop: () => Promise<void>
+    /** Stop PTT and return all snapshots captured during recording */
+    stop: () => Promise<ScreenSnapshot[]>
     onStart: (callback: () => void) => () => void
     onScreenshot: (callback: (base64: string) => void) => () => void
   }

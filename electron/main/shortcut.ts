@@ -1,10 +1,24 @@
 import { globalShortcut } from 'electron'
 import { startPTT, hideOverlay, getOverlayWindow } from './overlay-window'
-import { captureScreen } from '../utils/screenshot'
+import { startPeriodicCapture, stopPeriodicCapture } from '../utils/screenshot'
 import { logger } from '../utils/logger'
 import store from '../utils/store'
 
 let currentShortcut: string | null = null
+
+function pttHandler() {
+  const win = getOverlayWindow()
+  if (!win) return
+
+  if (win.isVisible()) {
+    hideOverlay()
+    return
+  }
+
+  // Start PTT mode + periodic screenshot capture (every 2s)
+  startPTT()
+  startPeriodicCapture(2000)
+}
 
 export function registerShortcut(): void {
   const shortcut = store.get('shortcut')
@@ -12,28 +26,7 @@ export function registerShortcut(): void {
     globalShortcut.unregister(currentShortcut)
   }
 
-  const success = globalShortcut.register(shortcut, () => {
-    const win = getOverlayWindow()
-    if (!win) return
-
-    if (win.isVisible()) {
-      // If already visible, hide (toggle off)
-      hideOverlay()
-      return
-    }
-
-    // Start PTT mode
-    startPTT()
-
-    // Capture screenshot asynchronously and send to renderer
-    captureScreen().then((base64) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('ptt:screenshot', base64)
-      }
-    }).catch((err) => {
-      logger.error('Screenshot capture failed:', err)
-    })
-  })
+  const success = globalShortcut.register(shortcut, pttHandler)
 
   if (success) {
     currentShortcut = shortcut
@@ -48,26 +41,7 @@ export function updateShortcut(newShortcut: string): boolean {
     globalShortcut.unregister(currentShortcut)
   }
 
-  const handler = () => {
-    const win = getOverlayWindow()
-    if (!win) return
-
-    if (win.isVisible()) {
-      hideOverlay()
-      return
-    }
-
-    startPTT()
-    captureScreen().then((base64) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('ptt:screenshot', base64)
-      }
-    }).catch((err) => {
-      logger.error('Screenshot capture failed:', err)
-    })
-  }
-
-  const success = globalShortcut.register(newShortcut, handler)
+  const success = globalShortcut.register(newShortcut, pttHandler)
 
   if (success) {
     currentShortcut = newShortcut
@@ -75,9 +49,8 @@ export function updateShortcut(newShortcut: string): boolean {
     logger.info(`Shortcut updated: ${newShortcut}`)
     return true
   } else {
-    // Re-register old shortcut
     if (currentShortcut) {
-      globalShortcut.register(currentShortcut, handler)
+      globalShortcut.register(currentShortcut, pttHandler)
     }
     logger.error(`Failed to register new shortcut: ${newShortcut}`)
     return false
