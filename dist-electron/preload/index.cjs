@@ -6,12 +6,16 @@ const INVOKE_ALLOWED = new Set([
   "gateway:connect",
   "gateway:disconnect",
   "gateway:status",
+  "gateway:rpc",
   "gateway:process-status",
   "gateway:process-start",
   "gateway:process-stop",
   "gateway:process-restart",
   "shortcut:update",
   "overlay:hide",
+  "overlay:resize",
+  "screenshot:capture",
+  "ptt:stop",
   "store:get",
   "store:set",
   "mic:check-permission",
@@ -31,6 +35,8 @@ const ON_ALLOWED = new Set([
   "gateway:process-status",
   "overlay:show",
   "overlay:hide",
+  "ptt:start",
+  "ptt:screenshot",
 ]);
 
 function safeInvoke(channel, ...args) {
@@ -53,7 +59,7 @@ function safeOn(channel, handler) {
 const api = {
   gateway: {
     send: (method, params) => safeInvoke("gateway:send", method, params),
-    rpc: (method, params) => safeInvoke("gateway:send", method, params),
+    rpc: (method, params, timeoutMs) => safeInvoke("gateway:rpc", method, params, timeoutMs),
     connect: () => safeInvoke("gateway:connect"),
     disconnect: () => safeInvoke("gateway:disconnect"),
     getStatus: () => safeInvoke("gateway:status"),
@@ -72,6 +78,7 @@ const api = {
   },
   overlay: {
     hide: () => safeInvoke("overlay:hide"),
+    resize: (height) => safeInvoke("overlay:resize", height),
     onShow: (callback) => {
       const handler = () => callback();
       return safeOn("overlay:show", handler);
@@ -79,6 +86,20 @@ const api = {
     onHide: (callback) => {
       const handler = () => callback();
       return safeOn("overlay:hide", handler);
+    },
+  },
+  screenshot: {
+    capture: () => safeInvoke("screenshot:capture"),
+  },
+  ptt: {
+    stop: () => safeInvoke("ptt:stop"),
+    onStart: (callback) => {
+      const handler = () => callback();
+      return safeOn("ptt:start", handler);
+    },
+    onScreenshot: (callback) => {
+      const handler = (_event, base64) => callback(base64);
+      return safeOn("ptt:screenshot", handler);
     },
   },
   shortcut: {
