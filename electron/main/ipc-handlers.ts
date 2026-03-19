@@ -184,6 +184,19 @@ export function setupIpcHandlers(): void {
       store.set('tts' as any, safeTts)
       return
     }
+    // Validate shortcut accelerator format
+    if (key === 'shortcut') {
+      if (typeof value !== 'string' || !isValidAccelerator(value)) {
+        logger.warn(`Blocked invalid shortcut via store:set: ${value}`)
+        throw new Error('Invalid shortcut accelerator')
+      }
+    }
+    // Validate onboarded is boolean
+    if (key === 'onboarded') {
+      if (typeof value !== 'boolean') {
+        throw new Error('Invalid value for onboarded: must be boolean')
+      }
+    }
     store.set(key as any, value)
   })
 

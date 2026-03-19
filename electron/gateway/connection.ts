@@ -62,9 +62,12 @@ function loadGatewayToken(): string {
     const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json')
     const config = JSON.parse(readFileSync(configPath, 'utf8'))
     const token = config?.gateway?.auth?.token
-    if (token) {
+    if (token && typeof token === 'string' && /^[a-zA-Z0-9\-_]{8,512}$/.test(token)) {
       logger.info('Gateway token loaded from ~/.openclaw/openclaw.json')
       return token
+    }
+    if (token) {
+      logger.warn('Gateway token has invalid format, ignoring')
     }
   } catch { /* no config file */ }
   return ''
@@ -78,11 +81,11 @@ async function ensureDeviceIdentity(): Promise<DeviceIdentity> {
   return deviceIdentity
 }
 
-function sendConnect(challengeNonce?: string): void {
+function sendConnect(challengeNonce: string): void {
   if (!ws || !deviceIdentity) return
 
   const signedAtMs = Date.now()
-  const nonce = challengeNonce || crypto.randomUUID()
+  const nonce = challengeNonce
 
   const payload = buildDeviceAuthPayload({
     deviceId: deviceIdentity.deviceId,

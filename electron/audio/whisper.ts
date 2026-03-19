@@ -81,7 +81,7 @@ async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
   if (!response.ok) {
     const errorText = await response.text()
     logger.error(`STT API error (${response.status}): ${errorText}`)
-    throw new Error(`STT API error: ${response.status} - ${errorText}`)
+    throw new Error(`音声認識エラー (${response.status})`)
   }
 
   const result = await response.json() as { text: string }
@@ -113,4 +113,6 @@ export function setupAudioHandlers(): void {
     logger.info(`Transcription result: "${text.substring(0, 100)}..."`)
     return text
   })
+}
+ })
 }

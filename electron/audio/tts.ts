@@ -89,6 +89,9 @@ export function setupTtsHandlers(): void {
     if (typeof message !== 'string' || !message.trim()) {
       throw new Error('Invalid message: expected non-empty string')
     }
+    if (message.length > 4096) {
+      throw new Error('Message too long: max 4096 characters')
+    }
 
     const voice = (store.get('tts.voice' as any) as string) || 'nova'
 
@@ -109,6 +112,9 @@ export function setupTtsHandlers(): void {
   ipcMain.handle('tts:synthesize', async (_event, text: string) => {
     if (typeof text !== 'string' || !text.trim()) {
       throw new Error('Invalid text: expected non-empty string')
+    }
+    if (text.length > 4096) {
+      throw new Error('Text too long: max 4096 characters')
     }
 
     const voice = (store.get('tts.voice' as any) as string) || 'nova'
