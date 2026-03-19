@@ -114,5 +114,3 @@ export function setupAudioHandlers(): void {
     return text
   })
 }
- })
-}
