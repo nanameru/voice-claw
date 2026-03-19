@@ -7,7 +7,8 @@ import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
 import { setupAudioHandlers } from '../audio/whisper'
 import { setupTtsHandlers } from '../audio/tts'
-import { captureScreenWithCursor, stopPeriodicCapture } from '../utils/screenshot'
+import { stopPeriodicCapture, getScreenPermissionStatus } from '../utils/screenshot'
+import { findOpenClawBinary, getOpenClawVersion, installOpenClawCLI } from '../utils/cli-installer'
 
 // ── Security: Store key allowlist ──────────────────────
 const STORE_ALLOWED_KEYS = new Set([
@@ -291,9 +292,9 @@ export function setupIpcHandlers(): void {
     return await rpcGateway(method, params || {}, timeoutMs)
   })
 
-  // ── Screenshot capture ─────────────────────────────────
-  ipcMain.handle('screenshot:capture', async () => {
-    return await captureScreenWithCursor()
+  // ── Screen Recording permission check ───────────────────
+  ipcMain.handle('screen:check-permission', () => {
+    return getScreenPermissionStatus()
   })
 
   // ── Overlay resize ─────────────────────────────────────
@@ -309,5 +310,46 @@ export function setupIpcHandlers(): void {
     stopPTT()
     // Stop periodic capture and return all snapshots
     return stopPeriodicCapture()
+  })
+
+  // ── Setup: CLI check & install ───────────────────────
+  ipcMain.handle('setup:check-cli', async () => {
+    const binary = findOpenClawBinary()
+    if (!binary) return { installed: false }
+    const version = getOpenClawVersion(binary)
+    return { installed: true, path: binary, version }
+  })
+
+  ipcMain.handle('setup:install-cli', async (event) => {
+    return await installOpenClawCLI((progress) => {
+      // Send progress to renderer
+      if (event.sender && !event.sender.isDestroyed()) {
+        event.sender.send('setup:install-progress', progress)
+      }
+    })
+  })
+
+  ipcMain.handle('setup:check-gateway', async () => {
+    const manager = getGatewayProcessManager()
+    return manager.getStatus()
+  })
+
+  ipcMain.handle('setup:start-gateway', async () => {
+    const manager = getGatewayProcessManager()
+    try {
+      await manager.start()
+      return { ok: true, status: manager.getStatus() }
+    } catch (err) {
+      return { ok: false, error: String(err), status: manager.getStatus() }
+    }
+  })
+
+  ipcMain.handle('setup:connect-gateway', async () => {
+    const win = getOverlayWindow()
+    if (win) {
+      await connectToGateway(win)
+      return { ok: true }
+    }
+    return { ok: false, error: 'No window available' }
   })
 }

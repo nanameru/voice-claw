@@ -21,14 +21,13 @@ export interface VoiceClawAPI {
     onShow: (callback: () => void) => () => void
     onHide: (callback: () => void) => () => void
   }
-  screenshot: {
-    capture: () => Promise<ScreenSnapshot>
+  screen: {
+    checkPermission: () => Promise<string>
   }
   ptt: {
-    /** Stop PTT and return all snapshots captured during recording */
+    /** Stop PTT and return all snapshots captured during recording (main process only) */
     stop: () => Promise<ScreenSnapshot[]>
     onStart: (callback: () => void) => () => void
-    onScreenshot: (callback: (base64: string) => void) => () => void
   }
   shortcut: {
     update: (shortcut: string) => Promise<boolean>
@@ -62,6 +61,14 @@ export interface VoiceClawAPI {
       response: string
     }) => Promise<void>
     clear: () => Promise<void>
+  }
+  setup: {
+    checkCLI: () => Promise<{ installed: boolean; path?: string; version?: string }>
+    installCLI: () => Promise<{ success: boolean; path?: string; version?: string; error?: string }>
+    onInstallProgress: (callback: (progress: { event: string; message: string; version?: string; path?: string }) => void) => () => void
+    checkGateway: () => Promise<{ state: string; port: number; error?: string }>
+    startGateway: () => Promise<{ ok: boolean; error?: string; status: { state: string; port: number } }>
+    connectGateway: () => Promise<{ ok: boolean; error?: string }>
   }
 }
 

@@ -14,7 +14,7 @@ const INVOKE_ALLOWED = new Set([
   'shortcut:update',
   'overlay:hide',
   'overlay:resize',
-  'screenshot:capture',
+  'screen:check-permission',
   'ptt:stop',
   'store:get',
   'store:set',
@@ -26,6 +26,11 @@ const INVOKE_ALLOWED = new Set([
   'conversations:get',
   'conversations:add',
   'conversations:clear',
+  'setup:check-cli',
+  'setup:install-cli',
+  'setup:check-gateway',
+  'setup:start-gateway',
+  'setup:connect-gateway',
 ])
 
 const ON_ALLOWED = new Set([
@@ -36,7 +41,7 @@ const ON_ALLOWED = new Set([
   'overlay:show',
   'overlay:hide',
   'ptt:start',
-  'ptt:screenshot',
+  'setup:install-progress',
 ])
 
 function safeInvoke(channel: string, ...args: unknown[]) {
@@ -92,21 +97,17 @@ const api = {
     },
   },
 
-  // Screenshot
-  screenshot: {
-    capture: () => safeInvoke('screenshot:capture') as Promise<string>,
+  // Screen permission (read-only, no capture from renderer)
+  screen: {
+    checkPermission: () => safeInvoke('screen:check-permission') as Promise<string>,
   },
 
-  // PTT (Push-to-Talk)
+  // PTT (Push-to-Talk) — screenshots captured by main process only
   ptt: {
     stop: () => safeInvoke('ptt:stop'),
     onStart: (callback: () => void) => {
       const handler = () => callback()
       return safeOn('ptt:start', handler)
-    },
-    onScreenshot: (callback: (base64: string) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, base64: string) => callback(base64)
-      return safeOn('ptt:screenshot', handler as (...args: unknown[]) => void)
     },
   },
 
@@ -144,6 +145,19 @@ const api = {
     add: (conversation: { id: string; timestamp: number; transcript: string; response: string }) =>
       safeInvoke('conversations:add', conversation),
     clear: () => safeInvoke('conversations:clear'),
+  },
+
+  // Setup
+  setup: {
+    checkCLI: () => safeInvoke('setup:check-cli') as Promise<{ installed: boolean; path?: string; version?: string }>,
+    installCLI: () => safeInvoke('setup:install-cli') as Promise<{ success: boolean; path?: string; version?: string; error?: string }>,
+    onInstallProgress: (callback: (progress: { event: string; message: string; version?: string; path?: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: { event: string; message: string; version?: string; path?: string }) => callback(progress)
+      return safeOn('setup:install-progress', handler as (...args: unknown[]) => void)
+    },
+    checkGateway: () => safeInvoke('setup:check-gateway'),
+    startGateway: () => safeInvoke('setup:start-gateway') as Promise<{ ok: boolean; error?: string; status: unknown }>,
+    connectGateway: () => safeInvoke('setup:connect-gateway') as Promise<{ ok: boolean; error?: string }>,
   },
 }
 

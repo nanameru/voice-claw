@@ -1,6 +1,7 @@
 # VoiceClaw - 開発ドキュメント
 
 ## 🔧 最新の修正履歴
+- 2026-03-20: OpenClaw CLIインストーラー + Setup IPC ハンドラー追加（cli-installer.ts, setup:* チャネル）
 - 2026-03-20: ボトムバーPTT（Push-to-Talk）UIに変更 + スクリーンショット自動キャプチャ機能追加
 - 2026-03-09: Skills管理パネル + Cronスケジュールタスク管理パネルを追加
 - 2026-03-09: Gateway RPC基盤をPromiseベースに拡張（rpcGateway関数追加）
@@ -24,6 +25,7 @@
 - `electron/main/tray.ts` - システムトレイ
 - `electron/gateway/connection.ts` - OpenClaw Gateway WebSocket接続 + Promise RPC基盤
 - `electron/gateway/process.ts` - Gatewayプロセスのライフサイクル管理
+- `electron/utils/cli-installer.ts` - OpenClaw CLIバイナリ検出・自動インストール
 - `electron/utils/device-identity.ts` - Ed25519デバイスID生成・署名
 - `electron/utils/store.ts` - electron-store + safeStorage暗号化
 - `electron/preload/index.ts` - contextBridge API（IPCチャネルホワイトリスト）
