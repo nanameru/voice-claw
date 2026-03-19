@@ -2,11 +2,12 @@ import { ipcMain, systemPreferences } from 'electron'
 import { sendToGateway, rpcGateway, connectToGateway, disconnectGateway, getConnectionStatus } from '../gateway/connection'
 import { getGatewayProcessManager } from '../gateway/process'
 import { updateShortcut } from './shortcut'
-import { hideOverlay, getOverlayWindow } from './overlay-window'
+import { hideOverlay, getOverlayWindow, resizeOverlayHeight, stopPTT } from './overlay-window'
 import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
 import { setupAudioHandlers } from '../audio/whisper'
 import { setupTtsHandlers } from '../audio/tts'
+import { captureScreen } from '../utils/screenshot'
 
 // ── Security: Store key allowlist ──────────────────────
 const STORE_ALLOWED_KEYS = new Set([
@@ -275,5 +276,23 @@ export function setupIpcHandlers(): void {
       throw new Error('Invalid timeout: must be 1000-60000ms')
     }
     return await rpcGateway(method, params || {}, timeoutMs)
+  })
+
+  // ── Screenshot capture ─────────────────────────────────
+  ipcMain.handle('screenshot:capture', async () => {
+    return await captureScreen()
+  })
+
+  // ── Overlay resize ─────────────────────────────────────
+  ipcMain.handle('overlay:resize', (_event, height: number) => {
+    if (typeof height !== 'number' || height < 64 || height > 400) {
+      throw new Error('Invalid overlay height: must be 64-400')
+    }
+    resizeOverlayHeight(height)
+  })
+
+  // ── PTT stop (from renderer) ───────────────────────────
+  ipcMain.handle('ptt:stop', () => {
+    stopPTT()
   })
 }

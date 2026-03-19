@@ -13,6 +13,9 @@ const INVOKE_ALLOWED = new Set([
   'gateway:process-restart',
   'shortcut:update',
   'overlay:hide',
+  'overlay:resize',
+  'screenshot:capture',
+  'ptt:stop',
   'store:get',
   'store:set',
   'mic:check-permission',
@@ -32,6 +35,8 @@ const ON_ALLOWED = new Set([
   'gateway:process-status',
   'overlay:show',
   'overlay:hide',
+  'ptt:start',
+  'ptt:screenshot',
 ])
 
 function safeInvoke(channel: string, ...args: unknown[]) {
@@ -76,6 +81,7 @@ const api = {
   // Overlay
   overlay: {
     hide: () => safeInvoke('overlay:hide'),
+    resize: (height: number) => safeInvoke('overlay:resize', height),
     onShow: (callback: () => void) => {
       const handler = () => callback()
       return safeOn('overlay:show', handler)
@@ -83,6 +89,24 @@ const api = {
     onHide: (callback: () => void) => {
       const handler = () => callback()
       return safeOn('overlay:hide', handler)
+    },
+  },
+
+  // Screenshot
+  screenshot: {
+    capture: () => safeInvoke('screenshot:capture') as Promise<string>,
+  },
+
+  // PTT (Push-to-Talk)
+  ptt: {
+    stop: () => safeInvoke('ptt:stop'),
+    onStart: (callback: () => void) => {
+      const handler = () => callback()
+      return safeOn('ptt:start', handler)
+    },
+    onScreenshot: (callback: (base64: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, base64: string) => callback(base64)
+      return safeOn('ptt:screenshot', handler as (...args: unknown[]) => void)
     },
   },
 

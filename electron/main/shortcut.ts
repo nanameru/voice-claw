@@ -1,5 +1,6 @@
 import { globalShortcut } from 'electron'
-import { toggleOverlay } from './overlay-window'
+import { startPTT, hideOverlay, getOverlayWindow } from './overlay-window'
+import { captureScreen } from '../utils/screenshot'
 import { logger } from '../utils/logger'
 import store from '../utils/store'
 
@@ -12,7 +13,26 @@ export function registerShortcut(): void {
   }
 
   const success = globalShortcut.register(shortcut, () => {
-    toggleOverlay()
+    const win = getOverlayWindow()
+    if (!win) return
+
+    if (win.isVisible()) {
+      // If already visible, hide (toggle off)
+      hideOverlay()
+      return
+    }
+
+    // Start PTT mode
+    startPTT()
+
+    // Capture screenshot asynchronously and send to renderer
+    captureScreen().then((base64) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('ptt:screenshot', base64)
+      }
+    }).catch((err) => {
+      logger.error('Screenshot capture failed:', err)
+    })
   })
 
   if (success) {
@@ -28,9 +48,26 @@ export function updateShortcut(newShortcut: string): boolean {
     globalShortcut.unregister(currentShortcut)
   }
 
-  const success = globalShortcut.register(newShortcut, () => {
-    toggleOverlay()
-  })
+  const handler = () => {
+    const win = getOverlayWindow()
+    if (!win) return
+
+    if (win.isVisible()) {
+      hideOverlay()
+      return
+    }
+
+    startPTT()
+    captureScreen().then((base64) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('ptt:screenshot', base64)
+      }
+    }).catch((err) => {
+      logger.error('Screenshot capture failed:', err)
+    })
+  }
+
+  const success = globalShortcut.register(newShortcut, handler)
 
   if (success) {
     currentShortcut = newShortcut
@@ -40,9 +77,7 @@ export function updateShortcut(newShortcut: string): boolean {
   } else {
     // Re-register old shortcut
     if (currentShortcut) {
-      globalShortcut.register(currentShortcut, () => {
-        toggleOverlay()
-      })
+      globalShortcut.register(currentShortcut, handler)
     }
     logger.error(`Failed to register new shortcut: ${newShortcut}`)
     return false

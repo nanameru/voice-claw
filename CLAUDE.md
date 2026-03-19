@@ -1,6 +1,7 @@
 # VoiceClaw - 開発ドキュメント
 
 ## 🔧 最新の修正履歴
+- 2026-03-20: ボトムバーPTT（Push-to-Talk）UIに変更 + スクリーンショット自動キャプチャ機能追加
 - 2026-03-09: Skills管理パネル + Cronスケジュールタスク管理パネルを追加
 - 2026-03-09: Gateway RPC基盤をPromiseベースに拡張（rpcGateway関数追加）
 - 2026-03-09: セキュリティ修正（safeStorage平文フォールバック廃止、デッドコード削除、型安全性向上）
@@ -12,13 +13,14 @@
 - 2026-03-09: 初期プロジェクト構築（Electron + React + TypeScript + Tailwind CSS）
 
 ## 🏗️ ディレクトリの目的と責務
-音声起動型AIアシスタントデスクトップアプリ。グローバルショートカットでSpotlight風フローティングオーバーレイを呼び出し、音声入力→OpenClaw実行→レスポンス表示を実現する。Skills管理・Cronタスク管理にも対応。
+音声起動型AIアシスタントデスクトップアプリ。Option+Space押しっぱなしのPush-to-Talkで画面下部のボトムバーが表示され、音声入力+自動スクリーンショット→OpenClaw実行→レスポンス表示を実現する。Skills管理・Cronタスク管理にも対応。
 
 ## 📁 主要ファイルの説明
 - `electron/main/index.ts` - Electronメインプロセスエントリ
-- `electron/main/overlay-window.ts` - フローティングオーバーレイウィンドウ管理
+- `electron/main/overlay-window.ts` - ボトムバーオーバーレイウィンドウ管理（PTT対応）
 - `electron/main/ipc-handlers.ts` - IPC通信ハンドラー（Gateway RPC、Skills、Cron対応）
-- `electron/main/shortcut.ts` - グローバルショートカット（Alt+Space）
+- `electron/main/shortcut.ts` - グローバルショートカット（Alt+Space → PTTトリガー + スクリーンショット取得）
+- `electron/utils/screenshot.ts` - macOS screencaptureによるスクリーンショット取得
 - `electron/main/tray.ts` - システムトレイ
 - `electron/gateway/connection.ts` - OpenClaw Gateway WebSocket接続 + Promise RPC基盤
 - `electron/gateway/process.ts` - Gatewayプロセスのライフサイクル管理

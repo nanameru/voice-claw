@@ -6,18 +6,21 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 let overlayWindow: BrowserWindow | null = null
+let isPTTMode = false
+let baseHeight = 64
 
 export function createOverlayWindow(): BrowserWindow {
-  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize
+  const display = screen.getPrimaryDisplay()
+  const { width: screenWidth, height: screenHeight } = display.workAreaSize
 
-  const windowWidth = 680
-  const windowHeight = 640
+  const windowWidth = Math.round(screenWidth * 0.85)
+  baseHeight = 64
 
   overlayWindow = new BrowserWindow({
     width: windowWidth,
-    height: windowHeight,
+    height: baseHeight,
     x: Math.round((screenWidth - windowWidth) / 2),
-    y: 120,
+    y: screenHeight - baseHeight - 12,
     show: false,
     frame: false,
     transparent: true,
@@ -37,11 +40,12 @@ export function createOverlayWindow(): BrowserWindow {
   })
 
   // In dev mode, don't hide on blur so DevTools can be used
-  if (!process.env.VITE_DEV_SERVER_URL) {
-    overlayWindow.on('blur', () => {
+  // In PTT mode, also don't hide on blur (controlled by isPTTMode flag)
+  overlayWindow.on('blur', () => {
+    if (!process.env.VITE_DEV_SERVER_URL && !isPTTMode) {
       hideOverlay()
-    })
-  }
+    }
+  })
 
   // Prevent navigation to external URLs
   overlayWindow.webContents.on('will-navigate', (e) => {
@@ -85,8 +89,49 @@ export function showOverlay(): void {
 
 export function hideOverlay(): void {
   if (!overlayWindow) return
+  isPTTMode = false
   overlayWindow.webContents.send('overlay:hide')
   overlayWindow.hide()
+  // Reset to base height
+  resizeOverlayHeight(baseHeight)
+}
+
+/**
+ * Resize overlay height (expands upward from bottom).
+ */
+export function resizeOverlayHeight(height: number): void {
+  if (!overlayWindow) return
+
+  const display = screen.getPrimaryDisplay()
+  const { height: screenHeight } = display.workAreaSize
+  const [width] = overlayWindow.getSize()
+
+  const clampedHeight = Math.max(baseHeight, Math.min(height, 400))
+  const y = screenHeight - clampedHeight - 12
+
+  overlayWindow.setBounds({
+    x: overlayWindow.getBounds().x,
+    y,
+    width,
+    height: clampedHeight,
+  })
+}
+
+/**
+ * Start PTT mode: show overlay, send ptt:start to renderer, disable blur-hide.
+ */
+export function startPTT(): void {
+  if (!overlayWindow) return
+  isPTTMode = true
+  showOverlay()
+  overlayWindow.webContents.send('ptt:start')
+}
+
+/**
+ * Stop PTT mode (called when key released or from renderer).
+ */
+export function stopPTT(): void {
+  isPTTMode = false
 }
 
 export function getOverlayWindow(): BrowserWindow | null {

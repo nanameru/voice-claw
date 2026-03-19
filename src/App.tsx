@@ -75,7 +75,7 @@ function AppContent() {
   }, [loadSettings, setView, setVisible, setStatus])
 
   return (
-    <div className="w-full h-full bg-claw-bg/95 backdrop-blur-xl rounded-2xl border border-claw-border/50 overflow-hidden shadow-2xl shadow-black/50">
+    <div className="w-full h-full bg-claw-bg/95 backdrop-blur-xl rounded-xl border border-claw-border/50 overflow-hidden shadow-2xl shadow-black/50">
       <AnimatePresence mode="wait">
         {view === 'onboarding' && <OnboardingFlow key="onboarding" />}
         {view === 'overlay' && <VoiceOverlay key="overlay" />}

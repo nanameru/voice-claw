@@ -1,8 +1,6 @@
-import { motion } from 'framer-motion'
-import { useEffect, useCallback, useRef, useState, useMemo } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useEffect, useCallback, useRef, useState } from 'react'
 import { AuraVisualizer } from './AuraVisualizer'
-import { ResponsePanel } from './ResponsePanel'
-import { ActivityPanel } from './ActivityPanel'
 import { useVoiceStore } from '../../stores/voice'
 import { useGatewayStore } from '../../stores/gateway'
 import { useUIStore } from '../../stores/ui'
@@ -10,23 +8,25 @@ import { useConversationStore } from '../../stores/conversation'
 import { useTtsStore } from '../../stores/tts'
 import { useSettingsStore } from '../../stores/settings'
 import { useActivityStore } from '../../stores/activity'
-import { useVAD } from '../../hooks/useVAD'
+import ReactMarkdown from 'react-markdown'
+import rehypeSanitize from 'rehype-sanitize'
 
-type OverlayStatus = 'idle' | 'listening' | 'speaking' | 'transcribing' | 'responding'
+type OverlayStatus = 'idle' | 'listening' | 'transcribing' | 'responding'
 
 export function VoiceOverlay() {
   const { setTranscript, setListening } = useVoiceStore()
-  const { status, clearResponse, setStreaming, appendResponse, isStreaming } = useGatewayStore()
-  const { setView } = useUIStore()
+  const { status, clearResponse, setStreaming, appendResponse, isStreaming, streamingResponse } = useGatewayStore()
+  const { setView, setPTTActive, setScreenshot, screenshotBase64 } = useUIStore()
   const { addConversation } = useConversationStore()
   const sessionKeyRef = useRef(`agent:main:${crypto.randomUUID()}`)
   const [textInput, setTextInput] = useState('')
   const textInputRef = useRef<HTMLInputElement>(null)
   const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('idle')
   const [transcribedText, setTranscribedText] = useState('')
-  const [interimText, setInterimText] = useState('')
-  const [vadActive, setVadActive] = useState(false)
-  const interimBusyRef = useRef(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+  const [expanded, setExpanded] = useState(false)
 
   // Sync TTS enabled state from settings
   const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
@@ -36,7 +36,6 @@ export function VoiceOverlay() {
 
   // TTS store
   const isTtsSpeaking = useTtsStore((s) => s.isSpeaking)
-  const ttsStop = useTtsStore((s) => s.stop)
 
   // Activity tracking
   const activity = useActivityStore
@@ -44,7 +43,34 @@ export function VoiceOverlay() {
   // Track the last sent message for conversation history
   const lastSentMessageRef = useRef('')
 
-  // Send message to gateway (ClawX-compatible protocol)
+  // Resize overlay when expanded state changes
+  useEffect(() => {
+    const height = expanded ? 240 : 64
+    window.voiceClaw.overlay.resize(height).catch(() => {})
+  }, [expanded])
+
+  // Filter out Whisper hallucinations
+  const isWhisperHallucination = useCallback((text: string): boolean => {
+    const t = text.trim().replace(/[。！!.…]+$/g, '')
+    if (t.length <= 1) return true
+
+    const hallucinations = [
+      'ご清聴ありがとう', 'ご視聴ありがとう', 'ありがとうございました',
+      'お疲れ様でした', 'お疲れさまでした', 'おつかれさまでした',
+      'おやすみなさい', 'では、また', 'ではまた',
+      'チャンネル登録', 'グッドボタン', 'いいねボタン', '高評価',
+      'チャンネル', '字幕', 'サブタイトル',
+      'ご覧いただき', 'ご覧頂き', 'お聞きいただき',
+      'お待ちください', 'しばらくお待ち', '最後までご覧',
+      'Thank you for watching', 'Thanks for watching', 'Thank you',
+      'Bye bye', 'Goodbye', 'See you', 'Subscribe', 'subtitles',
+      'MBS', 'NBC', 'NHK',
+    ]
+
+    return hallucinations.some((h) => t.includes(h))
+  }, [])
+
+  // Send message to gateway with optional screenshot
   const sendMessage = useCallback(async (message?: string) => {
     const msg = (message || textInput).trim()
     if (!msg) return
@@ -53,6 +79,7 @@ export function VoiceOverlay() {
     clearResponse()
     setStreaming(true)
     setOverlayStatus('responding')
+    setExpanded(true)
     setTextInput('')
     lastSentMessageRef.current = msg
 
@@ -62,164 +89,155 @@ export function VoiceOverlay() {
     }
     activity.getState().addStep('sending')
 
+    // Build message with screenshot context if available
+    const currentScreenshot = useUIStore.getState().screenshotBase64
+    let fullMessage = msg
+    if (currentScreenshot) {
+      fullMessage = `[Screenshot attached (base64 PNG, ${(currentScreenshot.length / 1024).toFixed(0)}KB)]\n\n${msg}`
+    }
+
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,
-      message: msg,
+      message: fullMessage,
       deliver: false,
       idempotencyKey: crypto.randomUUID(),
+      ...(currentScreenshot ? { screenshot: currentScreenshot } : {}),
     })
+
+    // Clear screenshot after sending
+    setScreenshot(null)
 
     activity.getState().completeStep('sending')
     activity.getState().addStep('responding')
-  }, [textInput, status, clearResponse, setStreaming])
+  }, [textInput, status, clearResponse, setStreaming, setScreenshot])
 
-  // Filter out Whisper hallucinations (common phrases generated from silence/noise)
-  const isWhisperHallucination = useCallback((text: string): boolean => {
-    const t = text.trim().replace(/[。！!.…]+$/g, '') // Strip trailing punctuation
-
-    // Too short to be meaningful
-    if (t.length <= 1) return true
-
-    // Known hallucination phrases (partial match - if text contains these)
-    const hallucinations = [
-      'ご清聴ありがとう',
-      'ご視聴ありがとう',
-      'ありがとうございました',
-      'お疲れ様でした',
-      'お疲れさまでした',
-      'おつかれさまでした',
-      'おやすみなさい',
-      'では、また',
-      'ではまた',
-      'チャンネル登録',
-      'グッドボタン',
-      'いいねボタン',
-      '高評価',
-      'チャンネル',
-      '字幕',
-      'サブタイトル',
-      'ご覧いただき',
-      'ご覧頂き',
-      'お聞きいただき',
-      'お待ちください',
-      'しばらくお待ち',
-      '最後までご覧',
-      'Thank you for watching',
-      'Thanks for watching',
-      'Thank you',
-      'Bye bye',
-      'Goodbye',
-      'See you',
-      'Subscribe',
-      'subtitles',
-      'MBS',
-      'NBC',
-      'NHK',
-    ]
-
-    return hallucinations.some((h) => t.includes(h))
-  }, [])
-
-  // Interim transcription (real-time, display only, don't send to gateway)
-  const transcribeInterim = useCallback(async (audioBlob: Blob) => {
-    if (interimBusyRef.current) return // Skip if previous interim is still processing
-    interimBusyRef.current = true
-
+  // Start recording (PTT)
+  const startRecording = useCallback(async () => {
     try {
-      const arrayBuffer = await audioBlob.arrayBuffer()
-      const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
-      if (text && text.trim() && !isWhisperHallucination(text)) {
-        setInterimText(text.trim())
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      audioChunksRef.current = []
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = mediaRecorder
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data)
+        }
       }
-    } catch (err) {
-      // Interim failures are non-critical, ignore silently
-      console.debug('Interim transcription error:', err)
-    } finally {
-      interimBusyRef.current = false
-    }
-  }, [isWhisperHallucination])
 
-  // Transcribe audio blob and send to gateway
-  const transcribeAndSend = useCallback(async (audioBlob: Blob) => {
-    setOverlayStatus('transcribing')
-    const sizeKB = (audioBlob.size / 1024).toFixed(0)
-    activity.getState().addStep('transcribing', `${sizeKB}KB`)
+      mediaRecorder.onstop = async () => {
+        // Clean up stream
+        stream.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
 
-    try {
-      const arrayBuffer = await audioBlob.arrayBuffer()
-      const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
-      activity.getState().completeStep('transcribing')
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        audioChunksRef.current = []
 
-      if (text && text.trim() && !isWhisperHallucination(text)) {
-        setTranscribedText(text.trim())
-        setTranscript(text.trim())
-        activity.getState().setTranscribedText(text.trim())
-        await sendMessage(text.trim())
-      } else {
-        setOverlayStatus(vadActive ? 'listening' : 'idle')
-        activity.getState().failActivity(isWhisperHallucination(text) ? 'Filtered hallucination' : 'No speech detected')
+        if (audioBlob.size < 1000) {
+          // Too small, likely no speech
+          setOverlayStatus('idle')
+          activity.getState().failActivity('No speech detected')
+          return
+        }
+
+        // Transcribe
+        setOverlayStatus('transcribing')
+        activity.getState().addStep('transcribing', `${(audioBlob.size / 1024).toFixed(0)}KB`)
+
+        try {
+          const arrayBuffer = await audioBlob.arrayBuffer()
+          const text = await window.voiceClaw.audio.transcribe(arrayBuffer)
+          activity.getState().completeStep('transcribing')
+
+          if (text && text.trim() && !isWhisperHallucination(text)) {
+            setTranscribedText(text.trim())
+            setTranscript(text.trim())
+            activity.getState().setTranscribedText(text.trim())
+            await sendMessage(text.trim())
+          } else {
+            setOverlayStatus('idle')
+            activity.getState().failActivity(
+              isWhisperHallucination(text) ? 'Filtered hallucination' : 'No speech detected'
+            )
+          }
+        } catch (err) {
+          console.error('Transcription error:', err)
+          setOverlayStatus('idle')
+          activity.getState().failActivity(
+            `Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`
+          )
+        }
       }
-    } catch (err) {
-      console.error('Transcription error:', err)
-      setOverlayStatus(vadActive ? 'listening' : 'idle')
-      activity.getState().failActivity(
-        `Transcription failed: ${err instanceof Error ? err.message : 'unknown'}`
-      )
-    }
-  }, [sendMessage, setTranscript, vadActive, isWhisperHallucination])
 
-  // VAD callbacks (memoized to avoid re-creating VAD)
-  const vadOptions = useMemo(() => ({
-    onSpeechStart: () => {
+      mediaRecorder.start(100) // Collect data every 100ms
+      setOverlayStatus('listening')
+      setListening(true)
+      activity.getState().startActivity()
+      activity.getState().addStep('recording')
+    } catch (err) {
+      console.error('Failed to start recording:', err)
+      setOverlayStatus('idle')
+    }
+  }, [setListening, setTranscript, sendMessage, isWhisperHallucination])
+
+  // Stop recording (PTT release)
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current = null
+      setListening(false)
+      activity.getState().completeStep('recording')
+    }
+    setPTTActive(false)
+    window.voiceClaw.ptt.stop().catch(() => {})
+  }, [setListening, setPTTActive])
+
+  // PTT IPC listeners
+  useEffect(() => {
+    const unsubStart = window.voiceClaw.ptt.onStart(() => {
       // Stop TTS if speaking
       useTtsStore.getState().stop()
-      setOverlayStatus('speaking')
-      setInterimText('')
-      setListening(true)
-      useActivityStore.getState().startActivity()
-      useActivityStore.getState().addStep('recording')
-    },
-    onSpeechEnd: (audioBlob: Blob, durationMs: number) => {
-      setListening(false)
-      setInterimText('')
-      useActivityStore.getState().completeStep('recording')
+      setPTTActive(true)
+      startRecording()
+    })
 
-      if (durationMs < 200) {
-        // Too short, ignore
-        setOverlayStatus('listening')
-        useActivityStore.getState().failActivity('Too short')
-        return
-      }
+    const unsubScreenshot = window.voiceClaw.ptt.onScreenshot((base64: string) => {
+      setScreenshot(base64)
+    })
 
-      // Auto-transcribe and send
-      transcribeAndSend(audioBlob)
-    },
-    onInterimAudio: (audioBlob: Blob) => {
-      transcribeInterim(audioBlob)
-    },
-    onVADMisfire: () => {
-      setOverlayStatus('listening')
-      setInterimText('')
-    },
-  }), [setListening, transcribeAndSend, transcribeInterim])
-
-  // VAD hook
-  const { isListening: vadListening, isSpeaking: vadSpeaking, start: startVAD, stop: stopVAD } = useVAD(vadOptions)
-
-  // Toggle VAD mode (auto-conversation)
-  const toggleVAD = useCallback(async () => {
-    if (vadActive) {
-      stopVAD()
-      setVadActive(false)
-      setOverlayStatus('idle')
-      setListening(false)
-    } else {
-      ttsStop()
-      setVadActive(true)
-      setOverlayStatus('listening')
-      await startVAD()
+    return () => {
+      unsubStart()
+      unsubScreenshot()
     }
-  }, [vadActive, startVAD, stopVAD, ttsStop, setListening])
+  }, [startRecording, setPTTActive, setScreenshot])
+
+  // keyup listener for PTT stop (Space or Alt release)
+  useEffect(() => {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.key === 'Alt' || e.key === 'Meta') {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          stopRecording()
+        }
+      }
+    }
+
+    window.addEventListener('keyup', handleKeyUp)
+    return () => window.removeEventListener('keyup', handleKeyUp)
+  }, [stopRecording])
+
+  // Focus loss = auto-stop PTT
+  useEffect(() => {
+    const handleBlur = () => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        stopRecording()
+      }
+    }
+
+    window.addEventListener('blur', handleBlur)
+    return () => window.removeEventListener('blur', handleBlur)
+  }, [stopRecording])
 
   // Listen for gateway events (ClawX agent streaming protocol)
   useEffect(() => {
@@ -232,6 +250,7 @@ export function VoiceOverlay() {
         if (stream === 'assistant') {
           if (eventData?.delta) {
             appendResponse(eventData.delta)
+            setExpanded(true)
           }
         }
 
@@ -242,6 +261,7 @@ export function VoiceOverlay() {
             clearResponse()
             setStreaming(true)
             setOverlayStatus('responding')
+            setExpanded(true)
           }
 
           if (phase === 'end' || phase === 'done') {
@@ -267,28 +287,24 @@ export function VoiceOverlay() {
                 act.addStep('done')
                 act.completeStep('done')
                 act.completeActivity()
-                // Return to listening if VAD is active
-                setOverlayStatus(
-                  useActivityStore.getState().currentEntryId ? 'responding' : 'listening'
-                )
+                setOverlayStatus('idle')
               }).catch(() => {
                 act.addStep('done')
                 act.completeStep('done')
                 act.completeActivity()
-                setOverlayStatus('listening')
+                setOverlayStatus('idle')
               })
             } else {
               act.addStep('done')
               act.completeStep('done')
               act.completeActivity()
-              // Return to listening state if VAD is active
-              setOverlayStatus(vadActive ? 'listening' : 'idle')
+              setOverlayStatus('idle')
             }
           }
 
           if (phase === 'error') {
             setStreaming(false)
-            setOverlayStatus(vadActive ? 'listening' : 'idle')
+            setOverlayStatus('idle')
             useActivityStore.getState().failActivity('AI response error')
           }
         }
@@ -305,266 +321,203 @@ export function VoiceOverlay() {
       unsubEvent()
       unsubMessage()
     }
-  }, [appendResponse, setStreaming, addConversation, clearResponse, vadActive])
+  }, [appendResponse, setStreaming, addConversation, clearResponse])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopVAD()
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop()
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+      }
     }
-  }, [stopVAD])
+  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (vadActive) {
-          stopVAD()
-          setVadActive(false)
-          setOverlayStatus('idle')
-          setListening(false)
-        } else {
-          window.voiceClaw.overlay.hide()
+        if (mediaRecorderRef.current?.state === 'recording') {
+          stopRecording()
         }
+        setExpanded(false)
+        window.voiceClaw.overlay.hide()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [vadActive, stopVAD, setListening])
-
-  // Status text
-  const statusText = (() => {
-    switch (overlayStatus) {
-      case 'listening':
-        return 'Listening... (auto)'
-      case 'speaking':
-        return 'Detecting speech...'
-      case 'transcribing':
-        return 'Transcribing...'
-      case 'responding':
-        return 'AI responding...'
-      default:
-        return 'Click to start'
-    }
-  })()
+  }, [stopRecording])
 
   // Determine volume for Aura orb
-  const auraVolume = vadSpeaking
+  const isRecording = overlayStatus === 'listening'
+  const auraVolume = isRecording
     ? 0.8
-    : vadListening
-    ? 0.15
     : isTtsSpeaking
     ? 0.6
     : isStreaming
     ? 0.5
     : 0
 
+  // Status indicator color
+  const statusColor = overlayStatus === 'listening'
+    ? 'bg-emerald-400'
+    : overlayStatus === 'transcribing'
+    ? 'bg-yellow-400 animate-pulse'
+    : overlayStatus === 'responding'
+    ? 'bg-claw-accent animate-pulse'
+    : 'bg-claw-text-dim'
+
+  const statusLabel = overlayStatus === 'listening'
+    ? 'Recording...'
+    : overlayStatus === 'transcribing'
+    ? 'Transcribing...'
+    : overlayStatus === 'responding'
+    ? 'AI responding...'
+    : status === 'connected'
+    ? 'Ready'
+    : 'Disconnected'
+
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.95, y: -10 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95, y: -10 }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 20 }}
       transition={{ duration: 0.15, ease: 'easeOut' }}
       className="w-full h-full flex flex-col"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              status === 'connected'
-                ? 'bg-claw-success'
-                : status === 'connecting'
-                ? 'bg-claw-warning animate-pulse'
-                : 'bg-claw-error'
-            }`}
-          />
-          <span className="text-xs text-claw-text-dim">
-            {status === 'connected' ? 'Gateway Connected' : 'Disconnected'}
-          </span>
-          {vadActive && (
-            <span className="text-[10px] text-claw-accent font-medium ml-1">AUTO</span>
+      {/* Expanded response area */}
+      <AnimatePresence>
+        {expanded && streamingResponse && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="flex-1 overflow-hidden"
+          >
+            <div className="h-full overflow-y-auto px-4 py-3">
+              <div className="prose prose-invert prose-sm max-w-none text-claw-text text-xs leading-relaxed">
+                <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{streamingResponse}</ReactMarkdown>
+              </div>
+              {isStreaming && (
+                <motion.div
+                  className="flex gap-1 mt-1"
+                  animate={{ opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.2, repeat: Infinity }}
+                >
+                  <div className="w-1 h-1 rounded-full bg-claw-accent" />
+                  <div className="w-1 h-1 rounded-full bg-claw-accent" />
+                  <div className="w-1 h-1 rounded-full bg-claw-accent" />
+                </motion.div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Bottom bar: [status] [aura] [transcript/input] [nav buttons] [close] */}
+      <div className="h-16 min-h-[64px] flex items-center gap-3 px-4">
+        {/* Status dot */}
+        <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusColor}`} />
+
+        {/* Mini Aura Visualizer */}
+        <div className="w-7 h-7 shrink-0 rounded-full overflow-hidden">
+          <AuraVisualizer volume={auraVolume} className="w-full h-full" />
+        </div>
+
+        {/* Center: transcript or text input */}
+        <div className="flex-1 min-w-0">
+          {overlayStatus === 'listening' ? (
+            <div className="flex items-center gap-2">
+              {/* Waveform bars */}
+              <div className="flex items-center gap-0.5 h-5">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <motion.div
+                    key={i}
+                    className="w-0.5 bg-emerald-400 rounded-full"
+                    animate={{ height: [4, 12 + Math.random() * 8, 4] }}
+                    transition={{ duration: 0.4 + i * 0.1, repeat: Infinity, ease: 'easeInOut' }}
+                  />
+                ))}
+              </div>
+              <span className="text-xs text-emerald-400 font-medium truncate">{statusLabel}</span>
+              {screenshotBase64 && (
+                <span className="text-[10px] text-claw-text-dim">+screenshot</span>
+              )}
+            </div>
+          ) : transcribedText && overlayStatus === 'transcribing' ? (
+            <span className="text-xs text-yellow-300 truncate block">{transcribedText}</span>
+          ) : overlayStatus === 'responding' ? (
+            <span className="text-xs text-claw-accent truncate block">{statusLabel}</span>
+          ) : (
+            <input
+              ref={textInputRef}
+              type="text"
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && textInput.trim() && status === 'connected') {
+                  sendMessage(textInput)
+                }
+              }}
+              placeholder={status === 'connected' ? 'Type or hold Option+Space to talk...' : 'Waiting for Gateway...'}
+              disabled={status !== 'connected'}
+              className="w-full bg-transparent border-none text-sm text-claw-text placeholder-claw-text-dim focus:outline-none disabled:opacity-40"
+              autoFocus
+            />
           )}
         </div>
 
-        <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* Send button (only when text input has content) */}
+        {textInput.trim() && overlayStatus === 'idle' && (
+          <button
+            onClick={() => sendMessage(textInput)}
+            disabled={status !== 'connected' || isStreaming}
+            className="px-3 py-1.5 bg-claw-accent hover:bg-claw-accent/80 disabled:opacity-40 text-white text-xs font-medium rounded-md transition-colors shrink-0"
+          >
+            Send
+          </button>
+        )}
+
+        {/* Nav buttons */}
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
             onClick={() => setView('skills')}
-            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
+            className="text-[10px] text-claw-text-dim hover:text-claw-text transition-colors px-1 py-0.5"
           >
             Skills
           </button>
           <button
-            onClick={() => setView('cron')}
-            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
-          >
-            Cron
-          </button>
-          <button
             onClick={() => setView('history')}
-            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
+            className="text-[10px] text-claw-text-dim hover:text-claw-text transition-colors px-1 py-0.5"
           >
             History
           </button>
           <button
             onClick={() => setView('settings')}
-            className="text-xs text-claw-text-dim hover:text-claw-text transition-colors px-1.5 py-1"
+            className="text-[10px] text-claw-text-dim hover:text-claw-text transition-colors px-1 py-0.5"
           >
             Settings
           </button>
         </div>
-      </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 pb-2">
-        {/* Aura Orb */}
+        {/* Close button */}
         <button
-          onClick={toggleVAD}
-          disabled={status !== 'connected'}
-          className="relative w-28 h-28 flex items-center justify-center cursor-pointer disabled:cursor-not-allowed group focus:outline-none"
-          aria-label={vadActive ? 'Stop auto-conversation' : 'Start auto-conversation'}
+          onClick={() => {
+            setExpanded(false)
+            window.voiceClaw.overlay.hide()
+          }}
+          className="text-claw-text-dim hover:text-claw-text transition-colors shrink-0 p-1"
+          aria-label="Close"
         >
-          <div className="absolute inset-0 overflow-hidden rounded-full">
-            <AuraVisualizer volume={auraVolume} className="w-full h-full" />
-          </div>
-          {/* Speaking indicator */}
-          {vadSpeaking && (
-            <motion.div
-              className="absolute inset-0 rounded-full border-2 border-emerald-400/60"
-              animate={{ scale: [1, 1.08, 1], opacity: [0.6, 1, 0.6] }}
-              transition={{ duration: 1, repeat: Infinity }}
-            />
-          )}
-          {/* Listening pulse */}
-          {vadListening && !vadSpeaking && overlayStatus === 'listening' && (
-            <motion.div
-              className="absolute inset-0 rounded-full border border-claw-accent/30"
-              animate={{ scale: [1, 1.04, 1], opacity: [0.3, 0.6, 0.3] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            />
-          )}
-          <div className="relative z-10 w-10 h-10 rounded-full flex items-center justify-center bg-claw-surface/60 border border-claw-border/50 group-hover:bg-claw-surface/80 transition-colors">
-            {vadActive ? (
-              vadSpeaking ? (
-                /* Waveform icon when speaking */
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                  <path d="M2 12h2m4-6v12m4-8v4m4-10v16m4-12v8" strokeLinecap="round" />
-                </svg>
-              ) : (
-                /* Active mic icon */
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                  className={
-                    overlayStatus === 'responding' ? 'text-claw-accent'
-                    : overlayStatus === 'transcribing' ? 'text-claw-warning'
-                    : 'text-claw-success'
-                  }
-                >
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                  <line x1="12" x2="12" y1="19" y2="22" />
-                </svg>
-              )
-            ) : (
-              /* Idle mic icon */
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                className="text-claw-text-dim group-hover:text-claw-text transition-colors"
-              >
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" x2="12" y1="19" y2="22" />
-              </svg>
-            )}
-          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
-
-        {/* Status text */}
-        <span className={`text-xs font-medium ${
-          vadSpeaking
-            ? 'text-emerald-400'
-            : overlayStatus === 'listening'
-            ? 'text-claw-success'
-            : overlayStatus === 'transcribing'
-            ? 'text-claw-warning'
-            : overlayStatus === 'responding'
-            ? 'text-claw-accent'
-            : 'text-claw-text-dim'
-        }`}>
-          {statusText}
-        </span>
-
-        {/* Real-time interim transcription */}
-        {interimText && vadSpeaking && (
-          <motion.div
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-sm text-emerald-300 max-w-lg text-center"
-          >
-            {interimText}
-            <span className="animate-pulse">...</span>
-          </motion.div>
-        )}
-
-        {/* Final transcribed text */}
-        {transcribedText && !vadSpeaking && (
-          <motion.div
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-xs text-claw-text-dim italic max-w-lg text-center truncate"
-          >
-            &ldquo;{transcribedText}&rdquo;
-          </motion.div>
-        )}
-
-        {/* Text input fallback */}
-        <div className="w-full max-w-lg flex gap-2">
-          <input
-            ref={textInputRef}
-            type="text"
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && textInput.trim() && status === 'connected') {
-                sendMessage(textInput)
-              }
-            }}
-            placeholder={status === 'connected' ? 'Type a message...' : 'Waiting for Gateway...'}
-            disabled={status !== 'connected' || vadActive}
-            className="flex-1 bg-claw-surface border border-claw-border rounded-lg px-4 py-2.5 text-sm text-claw-text placeholder-claw-text-dim focus:outline-none focus:border-claw-accent disabled:opacity-40 transition-colors"
-            autoFocus
-          />
-          <button
-            onClick={() => sendMessage(textInput)}
-            disabled={!textInput.trim() || status !== 'connected' || isStreaming}
-            className="px-5 py-2.5 bg-claw-accent hover:bg-claw-accent/80 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            {isStreaming ? '...' : 'Send'}
-          </button>
-        </div>
-
-        <ResponsePanel />
-        <ActivityPanel />
-      </div>
-
-      {/* Footer */}
-      <div className="px-4 py-2 text-center">
-        <span className="text-[10px] text-claw-text-dim">
-          {vadActive ? (
-            <>
-              <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Esc</kbd> to stop
-              {' · '}
-              Auto-detecting speech via Silero VAD
-            </>
-          ) : (
-            <>
-              Click orb to start
-              {' · '}
-              <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Enter</kbd> to send
-              {' · '}
-              <kbd className="px-1 py-0.5 bg-claw-surface rounded text-[10px]">Esc</kbd> to close
-            </>
-          )}
-        </span>
       </div>
     </motion.div>
   )

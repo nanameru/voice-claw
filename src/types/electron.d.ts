@@ -11,8 +11,17 @@ export interface VoiceClawAPI {
   }
   overlay: {
     hide: () => Promise<void>
+    resize: (height: number) => Promise<void>
     onShow: (callback: () => void) => () => void
     onHide: (callback: () => void) => () => void
+  }
+  screenshot: {
+    capture: () => Promise<string>
+  }
+  ptt: {
+    stop: () => Promise<void>
+    onStart: (callback: () => void) => () => void
+    onScreenshot: (callback: (base64: string) => void) => () => void
   }
   shortcut: {
     update: (shortcut: string) => Promise<boolean>
