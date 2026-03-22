@@ -160,6 +160,8 @@ export function VoiceOverlay() {
 
     // Build message with screen context
     const currentSnapshots = useUIStore.getState().snapshots
+    console.log(`[VoiceClaw] sendMessage: ${currentSnapshots.length} snapshots available, sizes: ${currentSnapshots.map(s => `${(s.base64.length / 1024).toFixed(0)}KB`).join(', ') || 'none'}`)
+
     const screenCtx = buildScreenContext(currentSnapshots)
     let fullMessage = msg
     if (screenCtx) {
@@ -175,6 +177,8 @@ export function VoiceOverlay() {
           content: s.base64,
         }))
       : undefined
+
+    console.log(`[VoiceClaw] Sending chat.send with ${attachments?.length ?? 0} attachments`)
 
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,

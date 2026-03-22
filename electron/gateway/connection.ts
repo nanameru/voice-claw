@@ -284,8 +284,10 @@ export function sendToGateway(method: string, params: Record<string, unknown>): 
     params,
   }
 
-  // Log method only — never log params (may contain screenshots or sensitive data)
-  logger.info(`Sending to gateway: ${method} (id: ${message.id})`)
+  // Log method and attachment count — never log actual image data
+  const attachmentCount = Array.isArray(params?.attachments) ? (params.attachments as unknown[]).length : 0
+  const attachmentInfo = attachmentCount > 0 ? ` (${attachmentCount} attachments)` : ''
+  logger.info(`Sending to gateway: ${method} (id: ${message.id})${attachmentInfo}`)
   ws.send(JSON.stringify(message))
 }
 
