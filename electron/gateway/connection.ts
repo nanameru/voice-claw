@@ -168,7 +168,6 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
     ws.on('message', (data: WebSocket.RawData) => {
       try {
         const message = JSON.parse(data.toString())
-        logger.info(`Gateway recv: type=${message.type} ${message.event || message.method || message.id || ''} ok=${message.ok ?? ''}`)
 
         if (message.type === 'event' && message.event === 'connect.challenge') {
           const challengeNonce = message.payload?.nonce
@@ -194,6 +193,7 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
         }
 
         if (message.type === 'res') {
+          logger.info(`Gateway res: id=${message.id} ok=${message.ok}`)
           // Resolve pending RPC promises
           const pending = pendingRequests.get(message.id)
           if (pending) {
@@ -215,10 +215,15 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
         }
 
         if (message.type === 'event') {
+          // Only log lifecycle events (start/end/done), skip noisy streaming deltas
           if (message.event === 'agent') {
             const p = message.payload || {}
-            logger.info(`  agent event: stream=${p.stream} keys=${Object.keys(p).join(',')} data_keys=${p.data ? Object.keys(p.data).join(',') : 'none'}`)
-            logger.info(`  agent data: ${JSON.stringify(p.data || {}).slice(0, 200)}`)
+            if (p.stream === 'lifecycle') {
+              logger.info(`Agent lifecycle: phase=${p.data?.phase}`)
+            }
+            // Skip logging assistant stream deltas — too noisy
+          } else {
+            logger.info(`Gateway event: ${message.event}`)
           }
           safeSend('gateway:event', {
             event: message.event,
@@ -227,6 +232,7 @@ export async function connectToGateway(window: BrowserWindow): Promise<void> {
           return
         }
 
+        logger.info(`Gateway recv: type=${message.type}`)
         safeSend('gateway:message', message)
       } catch (e) {
         logger.error('Failed to parse gateway message:', e)
