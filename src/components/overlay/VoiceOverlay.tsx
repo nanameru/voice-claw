@@ -271,15 +271,18 @@ export function VoiceOverlay() {
     })
 
     // Safety: main process force-stop (e.g., 30s timeout if keyup was missed)
-    const unsubForceStop = window.voiceClaw.ptt.onForceStop(() => {
-      if (mediaRecorderRef.current?.state === 'recording') {
-        stopRecording()
-      }
-    })
+    let unsubForceStop: (() => void) | undefined
+    if (typeof window.voiceClaw.ptt.onForceStop === 'function') {
+      unsubForceStop = window.voiceClaw.ptt.onForceStop(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          stopRecording()
+        }
+      })
+    }
 
     return () => {
       unsubStart()
-      unsubForceStop()
+      unsubForceStop?.()
     }
   }, [startRecording, stopRecording, setPTTActive])
 
