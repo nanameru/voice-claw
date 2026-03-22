@@ -130,12 +130,22 @@ export function VoiceOverlay() {
       fullMessage = `${screenCtx.description}\n\n${msg}`
     }
 
+    // Convert screenshots to Gateway-compatible attachments format
+    // Gateway expects: { type: "image", mimeType: string, content: base64 }
+    const attachments = screenCtx
+      ? screenCtx.screenshots.map((s) => ({
+          type: 'image' as const,
+          mimeType: 'image/png',
+          content: s.base64,
+        }))
+      : undefined
+
     await window.voiceClaw.gateway.send('chat.send', {
       sessionKey: sessionKeyRef.current,
       message: fullMessage,
       deliver: false,
       idempotencyKey: crypto.randomUUID(),
-      ...(screenCtx ? { screenshots: screenCtx.screenshots } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     })
 
     // Clear snapshots after sending
