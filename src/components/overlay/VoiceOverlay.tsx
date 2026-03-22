@@ -30,6 +30,42 @@ export function VoiceOverlay() {
   const [expanded, setExpanded] = useState(false)
   const [snapshotCount, setSnapshotCount] = useState(0)
 
+  // Drag-to-move support
+  const isDragging = useRef(false)
+  const dragStart = useRef({ x: 0, y: 0 })
+
+  const handleDragMouseDown = useCallback((e: React.MouseEvent) => {
+    // Only start drag on left-click, ignore if target is input/button
+    if (e.button !== 0) return
+    const tag = (e.target as HTMLElement).tagName.toLowerCase()
+    if (tag === 'input' || tag === 'button' || tag === 'svg' || tag === 'line') return
+
+    isDragging.current = true
+    dragStart.current = { x: e.screenX, y: e.screenY }
+    e.preventDefault()
+  }, [])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const deltaX = e.screenX - dragStart.current.x
+      const deltaY = e.screenY - dragStart.current.y
+      if (deltaX !== 0 || deltaY !== 0) {
+        window.voiceClaw.overlay.move(deltaX, deltaY)
+        dragStart.current = { x: e.screenX, y: e.screenY }
+      }
+    }
+    const handleMouseUp = () => {
+      isDragging.current = false
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
   // Sync TTS enabled state from settings
   const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
   useEffect(() => {
@@ -490,8 +526,11 @@ export function VoiceOverlay() {
         )}
       </AnimatePresence>
 
-      {/* Bottom bar */}
-      <div className="h-16 min-h-[64px] flex items-center gap-3 px-4">
+      {/* Bottom bar — drag to move */}
+      <div
+        className="h-16 min-h-[64px] flex items-center gap-3 px-4 cursor-grab active:cursor-grabbing"
+        onMouseDown={handleDragMouseDown}
+      >
         {/* Status dot */}
         <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusColor}`} />
 
