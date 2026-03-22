@@ -30,41 +30,10 @@ export function VoiceOverlay() {
   const [expanded, setExpanded] = useState(false)
   const [snapshotCount, setSnapshotCount] = useState(0)
 
-  // Drag-to-move support
-  const isDragging = useRef(false)
-  const dragStart = useRef({ x: 0, y: 0 })
-
-  const handleDragMouseDown = useCallback((e: React.MouseEvent) => {
-    // Only start drag on left-click, ignore if target is input/button
-    if (e.button !== 0) return
-    const tag = (e.target as HTMLElement).tagName.toLowerCase()
-    if (tag === 'input' || tag === 'button' || tag === 'svg' || tag === 'line') return
-
-    isDragging.current = true
-    dragStart.current = { x: e.screenX, y: e.screenY }
-    e.preventDefault()
-  }, [])
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return
-      const deltaX = e.screenX - dragStart.current.x
-      const deltaY = e.screenY - dragStart.current.y
-      if (deltaX !== 0 || deltaY !== 0) {
-        window.voiceClaw.overlay.move(deltaX, deltaY)
-        dragStart.current = { x: e.screenX, y: e.screenY }
-      }
-    }
-    const handleMouseUp = () => {
-      isDragging.current = false
-    }
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [])
+  // Drag styles: Electron uses -webkit-app-region: drag for frameless window movement
+  // Interactive elements (input, button) must be marked as no-drag
+  const dragStyle: React.CSSProperties = { WebkitAppRegion: 'drag' } as any
+  const noDragStyle: React.CSSProperties = { WebkitAppRegion: 'no-drag' } as any
 
   // Sync TTS enabled state from settings
   const settingsTtsEnabled = useSettingsStore((s) => s.ttsEnabled)
@@ -530,10 +499,10 @@ export function VoiceOverlay() {
         )}
       </AnimatePresence>
 
-      {/* Bottom bar — drag to move */}
+      {/* Bottom bar — drag to move (via -webkit-app-region: drag) */}
       <div
-        className="h-16 min-h-[64px] flex items-center gap-3 px-4 cursor-grab active:cursor-grabbing"
-        onMouseDown={handleDragMouseDown}
+        className="h-16 min-h-[64px] flex items-center gap-3 px-4"
+        style={dragStyle}
       >
         {/* Status dot */}
         <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusColor}`} />
@@ -544,7 +513,7 @@ export function VoiceOverlay() {
         </div>
 
         {/* Center: transcript or text input */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0" style={noDragStyle}>
           {overlayStatus === 'listening' ? (
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-0.5 h-5">
@@ -594,13 +563,14 @@ export function VoiceOverlay() {
             onClick={() => sendMessage(textInput)}
             disabled={status !== 'connected' || isStreaming}
             className="px-3 py-1.5 bg-claw-accent hover:bg-claw-accent/80 disabled:opacity-40 text-white text-xs font-medium rounded-md transition-colors shrink-0"
+            style={noDragStyle}
           >
             Send
           </button>
         )}
 
         {/* Nav buttons */}
-        <div className="flex items-center gap-0.5 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0" style={noDragStyle}>
           <button
             onClick={() => setView('skills')}
             className="text-[10px] text-claw-text-dim hover:text-claw-text transition-colors px-1 py-0.5"
@@ -627,6 +597,7 @@ export function VoiceOverlay() {
             setExpanded(false)
             window.voiceClaw.overlay.hide()
           }}
+          style={noDragStyle}
           className="text-claw-text-dim hover:text-claw-text transition-colors shrink-0 p-1"
           aria-label="Close"
         >
