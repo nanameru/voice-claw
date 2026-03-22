@@ -105,41 +105,68 @@ export async function captureScreenWithCursor(): Promise<ScreenSnapshot> {
 // ── Periodic capture during PTT ─────────────────────────
 let captureTimer: ReturnType<typeof setInterval> | null = null
 let snapshots: ScreenSnapshot[] = []
+let pendingCapture: Promise<void> | null = null
 const MAX_SNAPSHOTS = 5  // Limit to 5 snapshots max (security: reduce data exposure)
+
+/**
+ * Run a single capture and track the pending promise.
+ */
+function doCapture(): void {
+  const promise = captureScreenWithCursor()
+    .then((snap) => {
+      snapshots.push(snap)
+      logger.info(`Snapshot collected: ${snapshots.length} total`)
+    })
+    .catch((err) => logger.error('Periodic capture error:', err instanceof Error ? err.message : 'unknown'))
+    .finally(() => {
+      if (pendingCapture === promise) pendingCapture = null
+    })
+  pendingCapture = promise
+}
 
 /**
  * Start periodic screenshot capture (every intervalMs).
  * First capture is immediate.
  */
 export function startPeriodicCapture(intervalMs = 2000): void {
-  stopPeriodicCapture()
+  stopPeriodicCaptureSync()
   snapshots = []
 
   // Immediate first capture
-  captureScreenWithCursor()
-    .then((snap) => snapshots.push(snap))
-    .catch((err) => logger.error('Periodic capture error:', err instanceof Error ? err.message : 'unknown'))
+  doCapture()
 
   captureTimer = setInterval(() => {
     if (snapshots.length >= MAX_SNAPSHOTS) return // Hard cap
-
-    captureScreenWithCursor()
-      .then((snap) => snapshots.push(snap))
-      .catch((err) => logger.error('Periodic capture error:', err instanceof Error ? err.message : 'unknown'))
+    doCapture()
   }, intervalMs)
 }
 
 /**
- * Stop periodic capture and return all collected snapshots.
- * Clears internal buffer immediately.
+ * Stop periodic capture (sync) — does NOT wait for pending captures.
  */
-export function stopPeriodicCapture(): ScreenSnapshot[] {
+function stopPeriodicCaptureSync(): void {
   if (captureTimer) {
     clearInterval(captureTimer)
     captureTimer = null
   }
+}
+
+/**
+ * Stop periodic capture and return all collected snapshots.
+ * WAITS for any in-progress capture to complete before returning.
+ */
+export async function stopPeriodicCapture(): Promise<ScreenSnapshot[]> {
+  stopPeriodicCaptureSync()
+
+  // Wait for any in-progress capture to finish
+  if (pendingCapture) {
+    logger.info('Waiting for pending screenshot capture to complete...')
+    await pendingCapture
+  }
+
   const result = [...snapshots]
   snapshots = []
+  logger.info(`stopPeriodicCapture: returning ${result.length} snapshots`)
   return result
 }
 
@@ -147,7 +174,8 @@ export function stopPeriodicCapture(): ScreenSnapshot[] {
  * Emergency cleanup — call on app quit to ensure no temp files remain.
  */
 export function cleanupScreenshots(): void {
-  stopPeriodicCapture()
+  stopPeriodicCaptureSync()
+  snapshots = []
   if (activeTmpFile) {
     try {
       require('fs').unlinkSync(activeTmpFile)

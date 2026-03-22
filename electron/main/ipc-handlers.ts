@@ -317,12 +317,12 @@ export function setupIpcHandlers(): void {
   })
 
   // ── PTT stop (from renderer) ───────────────────────────
-  ipcMain.handle('ptt:stop', () => {
+  ipcMain.handle('ptt:stop', async () => {
     stopPTT()
     // Clear PTT timeout safety net (keyup was received successfully)
     clearPTTTimeout()
-    // Stop periodic capture and return all snapshots
-    return stopPeriodicCapture()
+    // Stop periodic capture and wait for any in-progress capture to finish
+    return await stopPeriodicCapture()
   })
 
   // ── Setup: CLI check & install ───────────────────────
