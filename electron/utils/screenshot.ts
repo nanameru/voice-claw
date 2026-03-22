@@ -131,6 +131,7 @@ function doCapture(): void {
 export function startPeriodicCapture(intervalMs = 2000): void {
   stopPeriodicCaptureSync()
   snapshots = []
+  lastCaptureTime = 0
 
   // Immediate first capture
   doCapture()

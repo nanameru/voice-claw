@@ -27,6 +27,7 @@ export function VoiceOverlay() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
+  const pendingSnapshotsRef = useRef<Promise<ScreenSnapshot[]> | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [snapshotCount, setSnapshotCount] = useState(0)
 
@@ -168,6 +169,7 @@ export function VoiceOverlay() {
   // Start recording (PTT)
   const startRecording = useCallback(async () => {
     try {
+      pendingSnapshotsRef.current = null
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
       audioChunksRef.current = []
@@ -191,6 +193,7 @@ export function VoiceOverlay() {
 
         if (audioBlob.size < 1000) {
           setOverlayStatus('idle')
+          pendingSnapshotsRef.current = null
           clearSnapshots() // Security: clear snapshots on error path
           setSnapshotCount(0)
           activity.getState().failActivity('No speech detected')
@@ -207,12 +210,30 @@ export function VoiceOverlay() {
           activity.getState().completeStep('transcribing')
 
           if (text && text.trim() && !isWhisperHallucination(text)) {
+            const collectedSnapshots = await (pendingSnapshotsRef.current ?? Promise.resolve([]))
+            pendingSnapshotsRef.current = null
+            if (collectedSnapshots.length > 0) {
+              setSnapshots(collectedSnapshots)
+              setSnapshotCount(collectedSnapshots.length)
+
+              // Security: TTL safety net — auto-clear snapshots after 30s
+              // in case sendMessage is never reached (gateway disconnect, etc.)
+              setTimeout(() => {
+                const current = useUIStore.getState().snapshots
+                if (current.length > 0) {
+                  clearSnapshots()
+                  setSnapshotCount(0)
+                }
+              }, 30_000)
+            }
+
             setTranscribedText(text.trim())
             setTranscript(text.trim())
             activity.getState().setTranscribedText(text.trim())
             await sendMessage(text.trim())
           } else {
             setOverlayStatus('idle')
+            pendingSnapshotsRef.current = null
             clearSnapshots() // Security: clear on hallucination/no-speech
             setSnapshotCount(0)
             activity.getState().failActivity(
@@ -222,6 +243,7 @@ export function VoiceOverlay() {
         } catch (err) {
           console.error('Transcription error:', err)
           setOverlayStatus('idle')
+          pendingSnapshotsRef.current = null
           clearSnapshots() // Security: clear on transcription failure
           setSnapshotCount(0)
           activity.getState().failActivity(
@@ -252,23 +274,8 @@ export function VoiceOverlay() {
     setPTTActive(false)
 
     // ptt:stop returns all snapshots collected during recording
-    window.voiceClaw.ptt.stop().then((collectedSnapshots) => {
-      if (collectedSnapshots && collectedSnapshots.length > 0) {
-        setSnapshots(collectedSnapshots)
-        setSnapshotCount(collectedSnapshots.length)
-
-        // Security: TTL safety net — auto-clear snapshots after 30s
-        // in case sendMessage is never reached (gateway disconnect, etc.)
-        setTimeout(() => {
-          const current = useUIStore.getState().snapshots
-          if (current.length > 0) {
-            clearSnapshots()
-            setSnapshotCount(0)
-          }
-        }, 30_000)
-      }
-    }).catch(() => {})
-  }, [setListening, setPTTActive, setSnapshots, clearSnapshots])
+    pendingSnapshotsRef.current = window.voiceClaw.ptt.stop().catch(() => [])
+  }, [setListening, setPTTActive])
 
   // PTT IPC listeners
   useEffect(() => {
