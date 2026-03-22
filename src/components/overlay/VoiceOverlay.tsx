@@ -270,10 +270,18 @@ export function VoiceOverlay() {
       startRecording()
     })
 
+    // Safety: main process force-stop (e.g., 30s timeout if keyup was missed)
+    const unsubForceStop = window.voiceClaw.ptt.onForceStop(() => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        stopRecording()
+      }
+    })
+
     return () => {
       unsubStart()
+      unsubForceStop()
     }
-  }, [startRecording, setPTTActive])
+  }, [startRecording, stopRecording, setPTTActive])
 
   // keyup listener for PTT stop (Space or Alt release)
   useEffect(() => {

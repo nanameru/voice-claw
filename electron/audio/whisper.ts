@@ -23,7 +23,8 @@ async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
     throw new Error('API key not configured. Set it in Settings.')
   }
 
-  const provider = store.get('audio.sttProvider') || 'groq'
+  const audio = store.get('audio')
+  const provider = audio.sttProvider || 'groq'
   const endpoint = STT_ENDPOINTS[provider] || STT_ENDPOINTS.groq
 
   logger.info(`STT provider: ${provider}, model: ${endpoint.model}`)

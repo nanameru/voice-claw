@@ -14,6 +14,7 @@ const INVOKE_ALLOWED = new Set([
   'shortcut:update',
   'overlay:hide',
   'overlay:resize',
+  'overlay:move',
   'screen:check-permission',
   'ptt:stop',
   'store:get',
@@ -41,6 +42,7 @@ const ON_ALLOWED = new Set([
   'overlay:show',
   'overlay:hide',
   'ptt:start',
+  'ptt:force-stop',
   'setup:install-progress',
 ])
 
@@ -87,6 +89,7 @@ const api = {
   overlay: {
     hide: () => safeInvoke('overlay:hide'),
     resize: (height: number) => safeInvoke('overlay:resize', height),
+    move: (deltaX: number, deltaY: number) => safeInvoke('overlay:move', deltaX, deltaY),
     onShow: (callback: () => void) => {
       const handler = () => callback()
       return safeOn('overlay:show', handler)
@@ -108,6 +111,10 @@ const api = {
     onStart: (callback: () => void) => {
       const handler = () => callback()
       return safeOn('ptt:start', handler)
+    },
+    onForceStop: (callback: () => void) => {
+      const handler = () => callback()
+      return safeOn('ptt:force-stop', handler)
     },
   },
 

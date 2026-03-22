@@ -93,7 +93,8 @@ export function setupTtsHandlers(): void {
       throw new Error('Message too long: max 4096 characters')
     }
 
-    const voice = (store.get('tts.voice' as any) as string) || 'nova'
+    const ttsConfig = store.get('tts')
+    const voice = ttsConfig.voice || 'nova'
 
     logger.info(`TTS speak: generating acknowledgment for "${message.substring(0, 50)}..."`)
     const acknowledgment = await generateVoiceAcknowledgment(message)
@@ -117,7 +118,8 @@ export function setupTtsHandlers(): void {
       throw new Error('Text too long: max 4096 characters')
     }
 
-    const voice = (store.get('tts.voice' as any) as string) || 'nova'
+    const ttsConfig = store.get('tts')
+    const voice = ttsConfig.voice || 'nova'
 
     logger.info(`TTS synthesize: "${text.substring(0, 50)}..."`)
     const audioBuffer = await synthesizeSpeech(text, voice)

@@ -1,8 +1,8 @@
 import { ipcMain, systemPreferences } from 'electron'
 import { sendToGateway, rpcGateway, connectToGateway, disconnectGateway, getConnectionStatus } from '../gateway/connection'
 import { getGatewayProcessManager } from '../gateway/process'
-import { updateShortcut } from './shortcut'
-import { hideOverlay, getOverlayWindow, resizeOverlayHeight, stopPTT } from './overlay-window'
+import { updateShortcut, clearPTTTimeout } from './shortcut'
+import { hideOverlay, getOverlayWindow, resizeOverlayHeight, moveOverlay, stopPTT } from './overlay-window'
 import store, { setSecureValue, getSecureValue } from '../utils/store'
 import { logger } from '../utils/logger'
 import { setupAudioHandlers } from '../audio/whisper'
@@ -297,6 +297,17 @@ export function setupIpcHandlers(): void {
     return getScreenPermissionStatus()
   })
 
+  // ── Overlay move (drag support) ────────────────────────
+  ipcMain.handle('overlay:move', (_event, deltaX: number, deltaY: number) => {
+    if (typeof deltaX !== 'number' || typeof deltaY !== 'number') {
+      throw new Error('Invalid move delta: must be numbers')
+    }
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+      throw new Error('Invalid move delta: must be finite')
+    }
+    moveOverlay(Math.round(deltaX), Math.round(deltaY))
+  })
+
   // ── Overlay resize ─────────────────────────────────────
   ipcMain.handle('overlay:resize', (_event, height: number) => {
     if (typeof height !== 'number' || height < 64 || height > 400) {
@@ -308,6 +319,8 @@ export function setupIpcHandlers(): void {
   // ── PTT stop (from renderer) ───────────────────────────
   ipcMain.handle('ptt:stop', () => {
     stopPTT()
+    // Clear PTT timeout safety net (keyup was received successfully)
+    clearPTTTimeout()
     // Stop periodic capture and return all snapshots
     return stopPeriodicCapture()
   })

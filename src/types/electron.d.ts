@@ -18,6 +18,7 @@ export interface VoiceClawAPI {
   overlay: {
     hide: () => Promise<void>
     resize: (height: number) => Promise<void>
+    move: (deltaX: number, deltaY: number) => Promise<void>
     onShow: (callback: () => void) => () => void
     onHide: (callback: () => void) => () => void
   }
@@ -28,6 +29,8 @@ export interface VoiceClawAPI {
     /** Stop PTT and return all snapshots captured during recording (main process only) */
     stop: () => Promise<ScreenSnapshot[]>
     onStart: (callback: () => void) => () => void
+    /** Listen for force-stop from main process (timeout safety net) */
+    onForceStop: (callback: () => void) => () => void
   }
   shortcut: {
     update: (shortcut: string) => Promise<boolean>
