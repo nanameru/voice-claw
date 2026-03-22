@@ -13,7 +13,7 @@ export function createOverlayWindow(): BrowserWindow {
   const display = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = display.workAreaSize
 
-  const windowWidth = Math.round(screenWidth * 0.85)
+  const windowWidth = Math.round(screenWidth * 0.55)
   baseHeight = 64
 
   overlayWindow = new BrowserWindow({
