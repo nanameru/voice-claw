@@ -80,17 +80,31 @@ export function toggleOverlay(): void {
   }
 }
 
+/** Safe IPC send — prevents crash when render frame is disposed (e.g. during HMR) */
+function safeSendToOverlay(channel: string, ...args: unknown[]): void {
+  try {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      const wc = overlayWindow.webContents
+      if (wc && !wc.isDestroyed()) {
+        wc.send(channel, ...args)
+      }
+    }
+  } catch {
+    // Ignore — render frame may be mid-reload
+  }
+}
+
 export function showOverlay(): void {
-  if (!overlayWindow) return
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
   overlayWindow.show()
   overlayWindow.focus()
-  overlayWindow.webContents.send('overlay:show')
+  safeSendToOverlay('overlay:show')
 }
 
 export function hideOverlay(): void {
-  if (!overlayWindow) return
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
   isPTTMode = false
-  overlayWindow.webContents.send('overlay:hide')
+  safeSendToOverlay('overlay:hide')
   overlayWindow.hide()
   // Reset to base height
   resizeOverlayHeight(baseHeight)
@@ -100,7 +114,7 @@ export function hideOverlay(): void {
  * Resize overlay height (expands upward from bottom).
  */
 export function resizeOverlayHeight(height: number): void {
-  if (!overlayWindow) return
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
 
   const display = screen.getPrimaryDisplay()
   const { height: screenHeight } = display.workAreaSize
@@ -121,10 +135,10 @@ export function resizeOverlayHeight(height: number): void {
  * Start PTT mode: show overlay, send ptt:start to renderer, disable blur-hide.
  */
 export function startPTT(): void {
-  if (!overlayWindow) return
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
   isPTTMode = true
   showOverlay()
-  overlayWindow.webContents.send('ptt:start')
+  safeSendToOverlay('ptt:start')
 }
 
 /**
@@ -132,6 +146,28 @@ export function startPTT(): void {
  */
 export function stopPTT(): void {
   isPTTMode = false
+}
+
+/**
+ * Check if PTT mode is currently active.
+ */
+export function isPTTActive(): boolean {
+  return isPTTMode
+}
+
+/**
+ * Move overlay window by delta (for drag support).
+ */
+export function moveOverlay(deltaX: number, deltaY: number): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+
+  const bounds = overlayWindow.getBounds()
+  overlayWindow.setBounds({
+    x: bounds.x + deltaX,
+    y: bounds.y + deltaY,
+    width: bounds.width,
+    height: bounds.height,
+  })
 }
 
 export function getOverlayWindow(): BrowserWindow | null {

@@ -13,9 +13,17 @@ import { cleanupScreenshots } from '../utils/screenshot'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// Catch uncaught exceptions — disconnect gateway and exit gracefully
+// Catch uncaught exceptions — log all, but only exit on truly fatal errors
 process.on('uncaughtException', (err) => {
   logger.error('Uncaught exception:', err.message)
+
+  // Non-fatal Electron IPC errors (e.g. render frame disposed during HMR reload)
+  const nonFatal = /render frame was disposed|object has been destroyed|webcontents/i
+  if (nonFatal.test(err.message)) {
+    logger.warn('Non-fatal Electron error, continuing...')
+    return
+  }
+
   try {
     disconnectGateway()
   } catch { /* ignore cleanup errors */ }
