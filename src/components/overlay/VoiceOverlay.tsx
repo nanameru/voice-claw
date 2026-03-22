@@ -171,7 +171,7 @@ export function VoiceOverlay() {
     const attachments = screenCtx
       ? screenCtx.screenshots.map((s) => ({
           type: 'image' as const,
-          mimeType: 'image/png',
+          mimeType: 'image/jpeg',
           content: s.base64,
         }))
       : undefined

@@ -35,9 +35,9 @@ export function getScreenPermissionStatus(): string {
 /**
  * Generate a cryptographically random temp file path.
  */
-function secureTmpPath(): string {
+function secureTmpPath(ext = 'jpg'): string {
   const randomName = crypto.randomBytes(16).toString('hex')
-  return path.join(os.tmpdir(), `vc-${randomName}.png`)
+  return path.join(os.tmpdir(), `vc-${randomName}.${ext}`)
 }
 
 /**
@@ -58,15 +58,27 @@ export async function captureScreenWithCursor(): Promise<ScreenSnapshot> {
     throw new Error('Screen Recording permission denied. Enable in System Settings > Privacy > Screen Recording.')
   }
 
-  const tmpFile = secureTmpPath()
+  const tmpFile = secureTmpPath('jpg')
   activeTmpFile = tmpFile
   const cursor = screen.getCursorScreenPoint()
 
   try {
-    // -x: silent, -t png: PNG format, -R: capture specific region could be added later
-    await execFileAsync('screencapture', ['-x', '-t', 'png', tmpFile], {
+    // Capture as JPEG for smaller file size (~200-500KB vs 3-5MB PNG)
+    // Gateway has a 5MB attachment limit; Retina PNGs often exceed this
+    await execFileAsync('screencapture', ['-x', '-t', 'jpg', tmpFile], {
       timeout: 5000,
     })
+
+    // Resize to max 1920px width to keep under 5MB limit for Gateway
+    try {
+      await execFileAsync('sips', [
+        '--resampleWidth', '1920',
+        '--setProperty', 'formatOptions', '70',
+        tmpFile,
+      ], { timeout: 5000 })
+    } catch {
+      // sips resize failed — continue with original capture
+    }
 
     const buffer = await fs.readFile(tmpFile)
 
@@ -77,7 +89,7 @@ export async function captureScreenWithCursor(): Promise<ScreenSnapshot> {
     const sizeKB = (buffer.length / 1024).toFixed(0)
 
     // Log only metadata, never the image data
-    logger.info(`Screenshot captured: ${sizeKB}KB`)
+    logger.info(`Screenshot captured: ${sizeKB}KB (JPEG)`)
 
     return { base64, cursor, timestamp: now }
   } catch (err) {
